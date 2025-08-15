@@ -1,29 +1,70 @@
-# main.ps1
+# Load Windows Forms assembly
+Add-Type -AssemblyName System.Windows.Forms
 
-# Function to select source folder
-function Select-SourceFolder {
-    do {
-        $SourceFolder = Read-Host "Bitte Quellordner auswählen"
-        if (-not (Test-Path -Path $SourceFolder -PathType Container)) {
-            Write-Warning "Warnung: Ordner existiert nicht."
-        }
-    } while (-not (Test-Path -Path $SourceFolder -PathType Container))
-    return $SourceFolder
-}
+# Create the main form
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "File Processing Tool"
+$form.Size = New-Object System.Drawing.Size(400, 300)
+$form.StartPosition = "CenterScreen"
 
-# Function to load and validate config
-function Load-And-Validate-Config {
-    # Placeholder for loading and validating configuration
-    Write-Host "Config wird geladen und validiert..."
-}
+# Create a button for "Create Staging Folder"
+$btnCreateStaging = New-Object System.Windows.Forms.Button
+$btnCreateStaging.Text = "Create Staging Folder"
+$btnCreateStaging.Size = New-Object System.Drawing.Size(150, 30)
+$btnCreateStaging.Location = New-Object System.Drawing.Point(20, 20)
+$btnCreateStaging.Add_Click({
+    $stagingFolder = Create-Staging-Folder
+    [System.Windows.Forms.MessageBox]::Show("Staging folder created at: $stagingFolder")
+})
 
-# Function to initialize log file
-function Initialize-LogFile {
-    # Placeholder for log file initialization
-    Write-Host "Logdatei wird initialisiert..."
-}
+# Create a button for "Collect Files"
+$btnCollectFiles = New-Object System.Windows.Forms.Button
+$btnCollectFiles.Text = "Collect Files"
+$btnCollectFiles.Size = New-Object System.Drawing.Size(150, 30)
+$btnCollectFiles.Location = New-Object System.Drawing.Point(20, 70)
+$btnCollectFiles.Add_Click({
+    $sourceFolder = [System.Windows.Forms.FolderBrowserDialog]::new().ShowDialog()
+    if ($sourceFolder -eq [System.Windows.Forms.DialogResult]::OK) {
+        Collect-Files -SourceFolder $sourceFolder.SelectedPath
+        [System.Windows.Forms.MessageBox]::Show("Files collected from: $sourceFolder")
+    }
+})
 
-# Function to create temp staging folder
+# Create a button for "Copy to Staging"
+$btnCopyToStaging = New-Object System.Windows.Forms.Button
+$btnCopyToStaging.Text = "Copy to Staging"
+$btnCopyToStaging.Size = New-Object System.Drawing.Size(150, 30)
+$btnCopyToStaging.Location = New-Object System.Drawing.Point(20, 120)
+$btnCopyToStaging.Add_Click({
+    $sourceFolder = [System.Windows.Forms.FolderBrowserDialog]::new().ShowDialog()
+    if ($sourceFolder -eq [System.Windows.Forms.DialogResult]::OK) {
+        $stagingFolder = Create-Staging-Folder
+        Copy-To-Staging -SourceFolder $sourceFolder.SelectedPath -StagingFolder $stagingFolder
+        [System.Windows.Forms.MessageBox]::Show("Files copied to staging folder: $stagingFolder")
+    }
+})
+
+# Create a button for "Create ZIP"
+$btnCreateZIP = New-Object System.Windows.Forms.Button
+$btnCreateZIP.Text = "Create ZIP"
+$btnCreateZIP.Size = New-Object System.Drawing.Size(150, 30)
+$btnCreateZIP.Location = New-Object System.Drawing.Point(20, 170)
+$btnCreateZIP.Add_Click({
+    $stagingFolder = Create-Staging-Folder
+    Create-ZIP -StagingFolder $stagingFolder
+    [System.Windows.Forms.MessageBox]::Show("ZIP archive created from staging folder: $stagingFolder")
+})
+
+# Add buttons to the form
+$form.Controls.Add($btnCreateStaging)
+$form.Controls.Add($btnCollectFiles)
+$form.Controls.Add($btnCopyToStaging)
+$form.Controls.Add($btnCreateZIP)
+
+# Show the form
+[void]$form.ShowDialog()
+
+# Functions
 function Create-Staging-Folder {
     $StagingFolder = Join-Path -Path $env:TEMP -ChildPath "Staging"
     if (-not (Test-Path -Path $StagingFolder)) {
@@ -32,7 +73,6 @@ function Create-Staging-Folder {
     return $StagingFolder
 }
 
-# Function to collect files and apply excludes
 function Collect-Files {
     param (
         [string]$SourceFolder
@@ -41,7 +81,6 @@ function Collect-Files {
     # Placeholder for file collection logic
 }
 
-# Function to copy files to staging
 function Copy-To-Staging {
     param (
         [string]$SourceFolder,
@@ -51,7 +90,6 @@ function Copy-To-Staging {
     # Placeholder for file copy logic
 }
 
-# Function to create ZIP archive
 function Create-ZIP {
     param (
         [string]$StagingFolder
@@ -59,66 +97,3 @@ function Create-ZIP {
     Write-Host "ZIP Archiv wird erzeugt..."
     # Placeholder for ZIP creation logic
 }
-
-# Function to encrypt ZIP if enabled
-function Encrypt-ZIP {
-    param (
-        [string]$ZIPFile
-    )
-    Write-Host "ZIP Archiv wird verschlüsselt..."
-    # Placeholder for encryption logic
-}
-
-# Function to clean up staging
-function Cleanup-Staging {
-    param (
-        [string]$StagingFolder
-    )
-    Write-Host "Staging wird bereinigt..."
-    Remove-Item -Recurse -Force -Path $StagingFolder
-}
-
-# Function to delete old artifacts (retention)
-function Retention-Cleanup {
-    Write-Host "Alte Artefakte werden gelöscht..."
-    # Placeholder for retention logic
-}
-
-# Function to determine aggregate status
-function Determine-Aggregate-Status {
-    Write-Host "Aggregatstatus wird bestimmt..."
-    # Placeholder for status determination logic
-}
-
-# Function to send notification if configured
-function Send-Notification {
-    Write-Host "Benachrichtigung wird gesendet..."
-    # Placeholder for notification logic
-}
-
-# Main script execution
-$SourceFolder = Select-SourceFolder
-Load-And-Validate-Config
-Initialize-LogFile
-$StagingFolder = Create-Staging-Folder
-Collect-Files -SourceFolder $SourceFolder
-Copy-To-Staging -SourceFolder $SourceFolder -StagingFolder $StagingFolder
-Create-ZIP -StagingFolder $StagingFolder
-
-# Check if encryption is enabled
-$EncryptionEnabled = $false # Placeholder for actual config check
-if ($EncryptionEnabled) {
-    Encrypt-ZIP -ZIPFile "path/to/zipfile.zip"
-}
-
-Cleanup-Staging -StagingFolder $StagingFolder
-Retention-Cleanup
-Determine-Aggregate-Status
-
-# Check if notification is configured
-$NotificationConfigured = $false # Placeholder for actual config check
-if ($NotificationConfigured) {
-    Send-Notification
-}
-
-Write-Host "Ende"
