@@ -520,17 +520,15 @@ function Update-BackupListView {
             $sizeMB = [math]::Round(($e.SizeBytes/1MB), 2)
         }
 
-        $subitems = @(
-            [string]$e.Timestamp,
-            [string]$e.Type,
-            ("{0:0.##}" -f $sizeMB),
-            [string]$e.Path,
-            [string]$e.Source,
-            [string]$e.Destination
-        )
+        # Build ListViewItem explicitly to avoid ctor overload issues
+        $item = New-Object System.Windows.Forms.ListViewItem
+        $item.Text = [string]$e.Timestamp
+        [void]$item.SubItems.Add([string]$e.Type)
+        [void]$item.SubItems.Add(("{0:0.##}" -f $sizeMB))
+        [void]$item.SubItems.Add([string]$e.Path)
+        [void]$item.SubItems.Add([string]$e.Source)
+        [void]$item.SubItems.Add([string]$e.Destination)
 
-        # Pass a single string[] so the correct ctor is selected
-        $item = New-Object Windows.Forms.ListViewItem -ArgumentList (,$subitems)
         $item.Tag = $e
         [void]$ListView.Items.Add($item)
     }
