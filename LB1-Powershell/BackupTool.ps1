@@ -1,16 +1,18 @@
-# Cross-platform PowerShell Backup Tool
+# PowerShell Backup Tool - GUI Only
 
 # Config file path
-$configPath = Join-Path -Path $PSScriptRoot -ChildPath "config.json"
+$configDir = Join-Path $env:LOCALAPPDATA "BackupTool"
+if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir | Out-Null }
+$configPath = Join-Path $configDir "config.json"
 
-function Load-Config {
+function Get-Config {
     if (Test-Path $configPath) {
-        return Get-Content $configPath | ConvertFrom-Json
+        return Get-Content $configPath -Raw | ConvertFrom-Json
     } else {
         $default = @{
             SourcePath = ""
             TargetPath = ""
-            LogFile = "./backup.log"
+            LogFile = (Join-Path $configDir "backup.log")
             Exclude = @(".tmp", ".log")
         }
         $default | ConvertTo-Json | Set-Content $configPath
@@ -27,18 +29,21 @@ function Write-Log($message, $logFile) {
     "$timestamp $message" | Add-Content $logFile
 }
 
-function Run-Backup($config) {
+function Start-Backup($config) {
     $src = $config.SourcePath
     $dst = $config.TargetPath
     $log = $config.LogFile
     $exclude = $config.Exclude
 
+    if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($dst)) {
+        return "Source and Target paths must not be empty."
+    }
     if (-not (Test-Path $src)) {
         Write-Log "Source path '$src' does not exist." $log
         return "Source path does not exist."
     }
     if (-not (Test-Path $dst)) {
-        New-Item -ItemType Directory -Path $dst | Out-Null
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
     }
     $files = Get-ChildItem -Path $src -Recurse -File | Where-Object {
         $ext = $_.Extension
@@ -46,6 +51,9 @@ function Run-Backup($config) {
     }
     foreach ($file in $files) {
         $rel = $file.FullName.Substring($src.Length)
+        if ($rel.StartsWith('\') -or $rel.StartsWith('/')) {
+            $rel = $rel.Substring(1)
+        }
         $target = Join-Path $dst $rel
         $targetDir = Split-Path $target
         if (-not (Test-Path $targetDir)) {
@@ -58,191 +66,190 @@ function Run-Backup($config) {
     return "Backup completed."
 }
 
-# Platform check
-if ($IsWindows) {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
+# --- Modernized and Organized GUI ---
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-    $config = Load-Config
+$config = Get-Config
 
-    $form = New-Object Windows.Forms.Form
-    $form.Text = "PowerShell Backup Tool"
-    $form.Size = New-Object Drawing.Size(500, 400)
-    $form.StartPosition = "CenterScreen"
+$form = New-Object Windows.Forms.Form
+$form.Text = "PowerShell Backup Tool"
+$form.Size = New-Object Drawing.Size(600, 320)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.BackColor = [Drawing.Color]::FromArgb(245,245,245)
 
-    $lblSource = New-Object Windows.Forms.Label
-    $lblSource.Text = "Source Path:"
-    $lblSource.Location = '10,20'
-    $lblSource.Size = '100,20'
-    $form.Controls.Add($lblSource)
+$font = New-Object Drawing.Font("Segoe UI", 10)
+$form.Font = $font
 
-    $txtSource = New-Object Windows.Forms.TextBox
-    $txtSource.Location = '120,20'
-    $txtSource.Size = '250,20'
-    $txtSource.Text = $config.SourcePath
-    $form.Controls.Add($txtSource)
+$lblTitle = New-Object Windows.Forms.Label
+$lblTitle.Text = "Backup Tool"
+$lblTitle.Font = New-Object Drawing.Font("Segoe UI", 16, [Drawing.FontStyle]::Bold)
+$lblTitle.ForeColor = [Drawing.Color]::FromArgb(60,60,60)
+$lblTitle.AutoSize = $false
+$lblTitle.TextAlign = "MiddleCenter"
+$lblTitle.Dock = "Top"
+$lblTitle.Height = 40
+$form.Controls.Add($lblTitle)
 
-    $btnBrowseSource = New-Object Windows.Forms.Button
-    $btnBrowseSource.Text = "Browse"
-    $btnBrowseSource.Location = '380,20'
-    $btnBrowseSource.Size = '80,20'
-    $btnBrowseSource.Add_Click({
-        $fbd = New-Object Windows.Forms.FolderBrowserDialog
-        if ($fbd.ShowDialog() -eq "OK") {
-            $txtSource.Text = $fbd.SelectedPath
-        }
-    })
-    $form.Controls.Add($btnBrowseSource)
+$panel = New-Object Windows.Forms.Panel
+$panel.Dock = "Fill"
+$panel.Padding = '10,10,10,10'
+$panel.BackColor = [Drawing.Color]::FromArgb(235,235,235)
+$form.Controls.Add($panel)
 
-    $lblTarget = New-Object Windows.Forms.Label
-    $lblTarget.Text = "Target Path:"
-    $lblTarget.Location = '10,60'
-    $lblTarget.Size = '100,20'
-    $form.Controls.Add($lblTarget)
+# Source selector
+$lblSource = New-Object Windows.Forms.Label
+$lblSource.Text = "Quelle (zu sichernder Ordner):"
+$lblSource.Location = '10,10'
+$lblSource.Size = '200,25'
+$panel.Controls.Add($lblSource)
 
-    $txtTarget = New-Object Windows.Forms.TextBox
-    $txtTarget.Location = '120,60'
-    $txtTarget.Size = '250,20'
-    $txtTarget.Text = $config.TargetPath
-    $form.Controls.Add($txtTarget)
+$txtSource = New-Object Windows.Forms.TextBox
+$txtSource.Location = '220,10'
+$txtSource.Size = '250,25'
+$txtSource.Text = $config.SourcePath
+$panel.Controls.Add($txtSource)
 
-    $btnBrowseTarget = New-Object Windows.Forms.Button
-    $btnBrowseTarget.Text = "Browse"
-    $btnBrowseTarget.Location = '380,60'
-    $btnBrowseTarget.Size = '80,20'
-    $btnBrowseTarget.Add_Click({
-        $fbd = New-Object Windows.Forms.FolderBrowserDialog
-        if ($fbd.ShowDialog() -eq "OK") {
-            $txtTarget.Text = $fbd.SelectedPath
-        }
-    })
-    $form.Controls.Add($btnBrowseTarget)
+$btnBrowseSource = New-Object Windows.Forms.Button
+$btnBrowseSource.Text = "Ordner wählen"
+$btnBrowseSource.Location = '480,10'
+$btnBrowseSource.Size = '90,25'
+$btnBrowseSource.Add_Click({
+    $fbd = New-Object Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Quellordner auswählen"
+    if ($txtSource.Text -and (Test-Path $txtSource.Text)) {
+        $fbd.SelectedPath = $txtSource.Text
+    }
+    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+        $txtSource.Text = $fbd.SelectedPath
+    }
+})
+$panel.Controls.Add($btnBrowseSource)
 
-    $lblLog = New-Object Windows.Forms.Label
-    $lblLog.Text = "Log File:"
-    $lblLog.Location = '10,100'
-    $lblLog.Size = '100,20'
-    $form.Controls.Add($lblLog)
+$lblSourceInfo = New-Object Windows.Forms.Label
+$lblSourceInfo.Text = "Alle Dateien und Unterordner aus diesem Ordner werden gesichert (außer ausgeschlossene Dateitypen)."
+$lblSourceInfo.Location = '220,35'
+$lblSourceInfo.Size = '350,20'
+$lblSourceInfo.ForeColor = [Drawing.Color]::FromArgb(100,100,100)
+$panel.Controls.Add($lblSourceInfo)
 
-    $txtLog = New-Object Windows.Forms.TextBox
-    $txtLog.Location = '120,100'
-    $txtLog.Size = '250,20'
-    $txtLog.Text = $config.LogFile
-    $form.Controls.Add($txtLog)
+# Target selector
+$lblTarget = New-Object Windows.Forms.Label
+$lblTarget.Text = "Ziel (Backup-Ordner):"
+$lblTarget.Location = '10,70'
+$lblTarget.Size = '200,25'
+$panel.Controls.Add($lblTarget)
 
-    $lblExclude = New-Object Windows.Forms.Label
-    $lblExclude.Text = "Exclude Extensions (comma separated):"
-    $lblExclude.Location = '10,140'
-    $lblExclude.Size = '250,20'
-    $form.Controls.Add($lblExclude)
+$txtTarget = New-Object Windows.Forms.TextBox
+$txtTarget.Location = '220,70'
+$txtTarget.Size = '250,25'
+$txtTarget.Text = $config.TargetPath
+$panel.Controls.Add($txtTarget)
 
-    $txtExclude = New-Object Windows.Forms.TextBox
-    $txtExclude.Location = '10,170'
-    $txtExclude.Size = '450,20'
-    $txtExclude.Text = ($config.Exclude -join ", ")
-    $form.Controls.Add($txtExclude)
+$btnBrowseTarget = New-Object Windows.Forms.Button
+$btnBrowseTarget.Text = "Ordner wählen"
+$btnBrowseTarget.Location = '480,70'
+$btnBrowseTarget.Size = '90,25'
+$btnBrowseTarget.Add_Click({
+    $fbd = New-Object Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Zielordner auswählen"
+    if ($txtTarget.Text -and (Test-Path $txtTarget.Text)) {
+        $fbd.SelectedPath = $txtTarget.Text
+    }
+    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+        $txtTarget.Text = $fbd.SelectedPath
+    }
+})
+$panel.Controls.Add($btnBrowseTarget)
 
-    $btnSave = New-Object Windows.Forms.Button
-    $btnSave.Text = "Save Config"
-    $btnSave.Location = '10,210'
-    $btnSave.Size = '120,30'
-    $btnSave.Add_Click({
-        $config.SourcePath = $txtSource.Text
-        $config.TargetPath = $txtTarget.Text
-        $config.LogFile = $txtLog.Text
-        $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
-        Save-Config $config
-        [Windows.Forms.MessageBox]::Show("Config saved.")
-    })
-    $form.Controls.Add($btnSave)
+$lblTargetInfo = New-Object Windows.Forms.Label
+$lblTargetInfo.Text = "Backups werden in diesem Zielordner gespeichert."
+$lblTargetInfo.Location = '220,95'
+$lblTargetInfo.Size = '350,20'
+$lblTargetInfo.ForeColor = [Drawing.Color]::FromArgb(100,100,100)
+$panel.Controls.Add($lblTargetInfo)
 
-    $btnBackup = New-Object Windows.Forms.Button
-    $btnBackup.Text = "Run Backup"
-    $btnBackup.Location = '140,210'
-    $btnBackup.Size = '120,30'
-    $btnBackup.Add_Click({
-        $config.SourcePath = $txtSource.Text
-        $config.TargetPath = $txtTarget.Text
-        $config.LogFile = $txtLog.Text
-        $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
-        Save-Config $config
-        $result = Run-Backup $config
+$lblExclude = New-Object Windows.Forms.Label
+$lblExclude.Text = "Exclude Extensions (comma separated):"
+$lblExclude.Location = '10,130'
+$lblExclude.Size = '250,25'
+$panel.Controls.Add($lblExclude)
+
+$txtExclude = New-Object Windows.Forms.TextBox
+$txtExclude.Location = '10,160'
+$txtExclude.Size = '560,25'
+$txtExclude.Text = ($config.Exclude -join ", ")
+$panel.Controls.Add($txtExclude)
+
+$btnSave = New-Object Windows.Forms.Button
+$btnSave.Text = "Save Config"
+$btnSave.Location = '10,200'
+$btnSave.Size = '120,35'
+$btnSave.BackColor = [Drawing.Color]::FromArgb(220,220,220)
+$btnSave.Add_Click({
+    $config.SourcePath = $txtSource.Text
+    $config.TargetPath = $txtTarget.Text
+    $config.LogFile = (Join-Path $configDir "backup.log")
+    $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
+    Save-Config $config
+    [Windows.Forms.MessageBox]::Show("Config saved.")
+})
+$panel.Controls.Add($btnSave)
+
+$btnBackup = New-Object Windows.Forms.Button
+$btnBackup.Text = "Run Backup"
+$btnBackup.Location = '140,200'
+$btnBackup.Size = '120,35'
+$btnBackup.BackColor = [Drawing.Color]::FromArgb(200,220,200)
+$btnBackup.Add_Click({
+    $config.SourcePath = $txtSource.Text
+    $config.TargetPath = $txtTarget.Text
+    $config.LogFile = (Join-Path $configDir "backup.log")
+    $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
+    Save-Config $config
+    if ([string]::IsNullOrWhiteSpace($config.SourcePath) -or [string]::IsNullOrWhiteSpace($config.TargetPath)) {
+        [Windows.Forms.MessageBox]::Show("Source and Target paths must not be empty.")
+    } else {
+        $result = Start-Backup $config
         [Windows.Forms.MessageBox]::Show($result)
-    })
-    $form.Controls.Add($btnBackup)
-
-    $btnViewLog = New-Object Windows.Forms.Button
-    $btnViewLog.Text = "View Log"
-    $btnViewLog.Location = '270,210'
-    $btnViewLog.Size = '120,30'
-    $btnViewLog.Add_Click({
-        if (Test-Path $txtLog.Text) {
-            $logContent = Get-Content $txtLog.Text -Raw
-            $logForm = New-Object Windows.Forms.Form
-            $logForm.Text = "Backup Log"
-            $logForm.Size = '500,400'
-            $txtLogView = New-Object Windows.Forms.TextBox
-            $txtLogView.Multiline = $true
-            $txtLogView.ScrollBars = "Vertical"
-            $txtLogView.ReadOnly = $true
-            $txtLogView.Dock = "Fill"
-            $txtLogView.Text = $logContent
-            $logForm.Controls.Add($txtLogView)
-            $logForm.ShowDialog()
-        } else {
-            [Windows.Forms.MessageBox]::Show("Log file not found.")
-        }
-    })
-    $form.Controls.Add($btnViewLog)
-
-    [void]$form.ShowDialog()
-}
-else {
-    # Terminal menu for macOS/Linux
-    function Show-Menu {
-        Write-Host "PowerShell Backup Tool (Terminal Mode)"
-        Write-Host "1. Edit Config"
-        Write-Host "2. Run Backup"
-        Write-Host "3. View Log"
-        Write-Host "4. Exit"
-        $choice = Read-Host "Choose an option"
-        return $choice
     }
+})
+$panel.Controls.Add($btnBackup)
 
-    $config = Load-Config
-
-    while ($true) {
-        $choice = Show-Menu
-        switch ($choice) {
-            "1" {
-                $config.SourcePath = Read-Host "Source Path [$($config.SourcePath)]"
-                if (-not $config.SourcePath) { $config.SourcePath = $config.SourcePath }
-                $config.TargetPath = Read-Host "Target Path [$($config.TargetPath)]"
-                if (-not $config.TargetPath) { $config.TargetPath = $config.TargetPath }
-                $config.LogFile = Read-Host "Log File [$($config.LogFile)]"
-                if (-not $config.LogFile) { $config.LogFile = $config.LogFile }
-                $excludeInput = Read-Host "Exclude Extensions (comma separated) [$($config.Exclude -join ', ')]"
-                if ($excludeInput) {
-                    $config.Exclude = $excludeInput -split ',' | ForEach-Object { $_.Trim() }
-                }
-                Save-Config $config
-                Write-Host "Config saved.`n"
-            }
-            "2" {
-                $result = Run-Backup $config
-                Write-Host "$result`n"
-            }
-            "3" {
-                if (Test-Path $config.LogFile) {
-                    Write-Host "`n--- Log File ---"
-                    Get-Content $config.LogFile
-                    Write-Host "----------------`n"
-                } else {
-                    Write-Host "Log file not found.`n"
-                }
-            }
-            "4" { break }
-            default { Write-Host "Invalid choice.`n" }
-        }
+$btnViewLog = New-Object Windows.Forms.Button
+$btnViewLog.Text = "View Log"
+$btnViewLog.Location = '270,200'
+$btnViewLog.Size = '120,35'
+$btnViewLog.BackColor = [Drawing.Color]::FromArgb(220,220,240)
+$btnViewLog.Add_Click({
+    $logFile = (Join-Path $configDir "backup.log")
+    if (Test-Path $logFile) {
+        $logContent = Get-Content $logFile -Raw
+        $logForm = New-Object Windows.Forms.Form
+        $logForm.Text = "Backup Log"
+        $logForm.Size = '500,400'
+        $txtLogView = New-Object Windows.Forms.TextBox
+        $txtLogView.Multiline = $true
+        $txtLogView.ScrollBars = "Vertical"
+        $txtLogView.ReadOnly = $true
+        $txtLogView.Dock = "Fill"
+        $txtLogView.Text = $logContent
+        $logForm.Controls.Add($txtLogView)
+        $logForm.ShowDialog()
+    } else {
+        [Windows.Forms.MessageBox]::Show("Log file not found.")
     }
-}
+})
+$panel.Controls.Add($btnViewLog)
+
+$btnExit = New-Object Windows.Forms.Button
+$btnExit.Text = "Exit"
+$btnExit.Location = '410,200'
+$btnExit.Size = '120,35'
+$btnExit.BackColor = [Drawing.Color]::FromArgb(240,200,200)
+$btnExit.Add_Click({ $form.Close() })
+$panel.Controls.Add($btnExit)
+
+[void]$form.ShowDialog()
