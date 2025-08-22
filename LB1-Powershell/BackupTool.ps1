@@ -1,4 +1,4 @@
-# PowerShell Backup Tool - GUI Only
+# PowerShell Backup Tool - GUI Only (English, folder selector for backup, optional zip)
 
 # Config file path
 $configDir = Join-Path $env:LOCALAPPDATA "BackupTool"
@@ -7,13 +7,22 @@ $configPath = Join-Path $configDir "config.json"
 
 function Get-Config {
     if (Test-Path $configPath) {
-        return Get-Content $configPath -Raw | ConvertFrom-Json
+        $raw = Get-Content $configPath -Raw
+        $obj = $raw | ConvertFrom-Json
+        return [PSCustomObject]@{
+            SourceFolder = if ($obj -and $obj.SourceFolder) { $obj.SourceFolder } else { "" }
+            TargetFolder = if ($obj -and $obj.TargetFolder) { $obj.TargetFolder } else { "" }
+            LogFile      = if ($obj -and $obj.LogFile)      { $obj.LogFile }      else { (Join-Path $configDir "backup.log") }
+            Exclude      = if ($obj -and $obj.Exclude)      { $obj.Exclude }      else { @(".tmp", ".log") }
+            ZipBackup    = if ($obj -and $obj.ZipBackup)    { $obj.ZipBackup }    else { $false }
+        }
     } else {
-        $default = @{
-            SourcePath = ""
-            TargetPath = ""
-            LogFile = (Join-Path $configDir "backup.log")
-            Exclude = @(".tmp", ".log")
+        $default = [PSCustomObject]@{
+            SourceFolder = ""
+            TargetFolder = ""
+            LogFile      = (Join-Path $configDir "backup.log")
+            Exclude      = @(".tmp", ".log")
+            ZipBackup    = $false
         }
         $default | ConvertTo-Json | Set-Content $configPath
         return $default
@@ -30,40 +39,71 @@ function Write-Log($message, $logFile) {
 }
 
 function Start-Backup($config) {
-    $src = $config.SourcePath
-    $dst = $config.TargetPath
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+
+    $src = $config.SourceFolder
+    $dst = $config.TargetFolder
     $log = $config.LogFile
-    $exclude = $config.Exclude
+    $exclude = @()
+    if ($config.Exclude) { $exclude = $config.Exclude }
+    $zip = $false
+    if ($config.ZipBackup) { $zip = [bool]$config.ZipBackup }
 
     if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($dst)) {
-        return "Source and Target paths must not be empty."
+        return "Source folder and target folder must not be empty."
     }
     if (-not (Test-Path $src)) {
-        Write-Log "Source path '$src' does not exist." $log
-        return "Source path does not exist."
+        Write-Log "Source folder '$src' does not exist." $log
+        return "Source folder does not exist."
     }
     if (-not (Test-Path $dst)) {
         New-Item -ItemType Directory -Path $dst -Force | Out-Null
     }
-    $files = Get-ChildItem -Path $src -Recurse -File | Where-Object {
+
+    # If zip option chosen, create timestamped zip of the source folder into the destination
+    if ($zip) {
+        try {
+            $srcFull = (Resolve-Path $src).ProviderPath
+            $sourceName = Split-Path $srcFull -Leaf
+            $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+            $zipName = "$($sourceName)_backup_$timestamp.zip"
+            $zipPath = Join-Path $dst $zipName
+
+            # ensure any existing zip is overwritten
+            if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($srcFull, $zipPath)
+            Write-Log "Zipped: $srcFull -> $zipPath" $log
+            Write-Log "Backup (zip) completed from '$src' to '$zipPath'." $log
+            return "Backup completed. ZIP created: $zipPath"
+        } catch {
+            Write-Log "Error creating zip: $_" $log
+            return "Error creating zip: $($_.Exception.Message)"
+        }
+    }
+
+    # Resolve full source path and ensure trailing slash for substring calculations
+    $srcFull = (Resolve-Path $src).ProviderPath
+    if (-not $srcFull.EndsWith('\')) { $srcFull += '\' }
+
+    $files = Get-ChildItem -Path $srcFull -Recurse -File | Where-Object {
         $ext = $_.Extension
         -not ($exclude -contains $ext)
     }
+
     foreach ($file in $files) {
-        $rel = $file.FullName.Substring($src.Length)
-        if ($rel.StartsWith('\') -or $rel.StartsWith('/')) {
-            $rel = $rel.Substring(1)
-        }
+        $rel = $file.FullName.Substring($srcFull.Length).TrimStart('\','/')
         $target = Join-Path $dst $rel
         $targetDir = Split-Path $target
         if (-not (Test-Path $targetDir)) {
             New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         }
-        Copy-Item $file.FullName $target -Force
+        Copy-Item -Path $file.FullName -Destination $target -Force
         Write-Log "Copied: $($file.FullName) -> $target" $log
     }
-    Write-Log "Backup completed." $log
-    return "Backup completed."
+
+    Write-Log "Backup completed from '$src' to '$dst'." $log
+    return "Backup completed. Folder saved to: $dst"
 }
 
 # --- Modernized and Organized GUI ---
@@ -74,162 +114,169 @@ $config = Get-Config
 
 $form = New-Object Windows.Forms.Form
 $form.Text = "PowerShell Backup Tool"
-$form.Size = New-Object Drawing.Size(600, 320)
+$form.Size = New-Object Drawing.Size(1000, 640)
+$form.MinimumSize = New-Object Drawing.Size(900, 520)
 $form.StartPosition = "CenterScreen"
-$form.FormBorderStyle = 'FixedDialog'
-$form.MaximizeBox = $false
-$form.BackColor = [Drawing.Color]::FromArgb(245,245,245)
+$form.FormBorderStyle = 'Sizable'
+$form.MaximizeBox = $true
+$form.BackColor = [Drawing.Color]::White
+$form.Font = New-Object Drawing.Font("Segoe UI", 11)
 
-$font = New-Object Drawing.Font("Segoe UI", 10)
-$form.Font = $font
+# Use a TableLayoutPanel so controls stay visible and aligned
+$table = New-Object System.Windows.Forms.TableLayoutPanel
+$table.Dock = 'Fill'
+$table.Padding = '12,12,12,12'
+$table.AutoSize = $false
+$table.ColumnCount = 3
+# increased row count to accommodate zip checkbox
+$table.RowCount = 7
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute,160)))
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent,100)))
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute,120)))
+for ($i = 0; $i -lt $table.RowCount; $i++) {
+    $table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,50)))
+}
+$form.Controls.Add($table)
 
+# Title (spans all columns)
 $lblTitle = New-Object Windows.Forms.Label
-$lblTitle.Text = "Backup Tool"
-$lblTitle.Font = New-Object Drawing.Font("Segoe UI", 16, [Drawing.FontStyle]::Bold)
-$lblTitle.ForeColor = [Drawing.Color]::FromArgb(60,60,60)
-$lblTitle.AutoSize = $false
+$lblTitle.Text = "PowerShell Backup Tool"
+$lblTitle.Font = New-Object Drawing.Font("Segoe UI", 18, [Drawing.FontStyle]::Bold)
 $lblTitle.TextAlign = "MiddleCenter"
-$lblTitle.Dock = "Top"
-$lblTitle.Height = 40
-$form.Controls.Add($lblTitle)
+$lblTitle.Dock = 'Fill'
+$table.Controls.Add($lblTitle, 0, 0)
+$table.SetColumnSpan($lblTitle, 3)
 
-$panel = New-Object Windows.Forms.Panel
-$panel.Dock = "Fill"
-$panel.Padding = '10,10,10,10'
-$panel.BackColor = [Drawing.Color]::FromArgb(235,235,235)
-$form.Controls.Add($panel)
-
-# Source selector
+# Row 1: Source folder (folder picker)
 $lblSource = New-Object Windows.Forms.Label
-$lblSource.Text = "Quelle (zu sichernder Ordner):"
-$lblSource.Location = '10,10'
-$lblSource.Size = '200,25'
-$panel.Controls.Add($lblSource)
+$lblSource.Text = "Folder to backup:"
+$lblSource.TextAlign = "MiddleLeft"
+$lblSource.Dock = 'Fill'
+$table.Controls.Add($lblSource, 0, 1)
 
 $txtSource = New-Object Windows.Forms.TextBox
-$txtSource.Location = '220,10'
-$txtSource.Size = '250,25'
-$txtSource.Text = $config.SourcePath
-$panel.Controls.Add($txtSource)
+$txtSource.Dock = 'Fill'
+$txtSource.Text = $config.SourceFolder
+$table.Controls.Add($txtSource, 1, 1)
 
 $btnBrowseSource = New-Object Windows.Forms.Button
-$btnBrowseSource.Text = "Ordner wählen"
-$btnBrowseSource.Location = '480,10'
-$btnBrowseSource.Size = '90,25'
+$btnBrowseSource.Text = "Select Folder"
+$btnBrowseSource.Dock = 'Fill'
+$btnBrowseSource.BackColor = [Drawing.Color]::FromArgb(220,230,250)
+$btnBrowseSource.FlatStyle = 'Flat'
 $btnBrowseSource.Add_Click({
     $fbd = New-Object Windows.Forms.FolderBrowserDialog
-    $fbd.Description = "Quellordner auswählen"
-    if ($txtSource.Text -and (Test-Path $txtSource.Text)) {
-        $fbd.SelectedPath = $txtSource.Text
-    }
-    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
-        $txtSource.Text = $fbd.SelectedPath
-    }
+    $fbd.Description = "Select folder to backup"
+    if ($txtSource.Text -and (Test-Path $txtSource.Text)) { $fbd.SelectedPath = $txtSource.Text }
+    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) { $txtSource.Text = $fbd.SelectedPath }
 })
-$panel.Controls.Add($btnBrowseSource)
+$table.Controls.Add($btnBrowseSource, 2, 1)
 
-$lblSourceInfo = New-Object Windows.Forms.Label
-$lblSourceInfo.Text = "Alle Dateien und Unterordner aus diesem Ordner werden gesichert (außer ausgeschlossene Dateitypen)."
-$lblSourceInfo.Location = '220,35'
-$lblSourceInfo.Size = '350,20'
-$lblSourceInfo.ForeColor = [Drawing.Color]::FromArgb(100,100,100)
-$panel.Controls.Add($lblSourceInfo)
-
-# Target selector
+# Row 2: Target folder
 $lblTarget = New-Object Windows.Forms.Label
-$lblTarget.Text = "Ziel (Backup-Ordner):"
-$lblTarget.Location = '10,70'
-$lblTarget.Size = '200,25'
-$panel.Controls.Add($lblTarget)
+$lblTarget.Text = "Backup destination:"
+$lblTarget.TextAlign = "MiddleLeft"
+$lblTarget.Dock = 'Fill'
+$table.Controls.Add($lblTarget, 0, 2)
 
 $txtTarget = New-Object Windows.Forms.TextBox
-$txtTarget.Location = '220,70'
-$txtTarget.Size = '250,25'
-$txtTarget.Text = $config.TargetPath
-$panel.Controls.Add($txtTarget)
+$txtTarget.Dock = 'Fill'
+$txtTarget.Text = $config.TargetFolder
+$table.Controls.Add($txtTarget, 1, 2)
 
 $btnBrowseTarget = New-Object Windows.Forms.Button
-$btnBrowseTarget.Text = "Ordner wählen"
-$btnBrowseTarget.Location = '480,70'
-$btnBrowseTarget.Size = '90,25'
+$btnBrowseTarget.Text = "Select Folder"
+$btnBrowseTarget.Dock = 'Fill'
+$btnBrowseTarget.BackColor = [Drawing.Color]::FromArgb(220,230,250)
+$btnBrowseTarget.FlatStyle = 'Flat'
 $btnBrowseTarget.Add_Click({
     $fbd = New-Object Windows.Forms.FolderBrowserDialog
-    $fbd.Description = "Zielordner auswählen"
-    if ($txtTarget.Text -and (Test-Path $txtTarget.Text)) {
-        $fbd.SelectedPath = $txtTarget.Text
-    }
-    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
-        $txtTarget.Text = $fbd.SelectedPath
-    }
+    $fbd.Description = "Select backup destination folder"
+    if ($txtTarget.Text -and (Test-Path $txtTarget.Text)) { $fbd.SelectedPath = $txtTarget.Text }
+    if ($fbd.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) { $txtTarget.Text = $fbd.SelectedPath }
 })
-$panel.Controls.Add($btnBrowseTarget)
+$table.Controls.Add($btnBrowseTarget, 2, 2)
 
-$lblTargetInfo = New-Object Windows.Forms.Label
-$lblTargetInfo.Text = "Backups werden in diesem Zielordner gespeichert."
-$lblTargetInfo.Location = '220,95'
-$lblTargetInfo.Size = '350,20'
-$lblTargetInfo.ForeColor = [Drawing.Color]::FromArgb(100,100,100)
-$panel.Controls.Add($lblTargetInfo)
+# Row 3: Zip option
+$lblZip = New-Object Windows.Forms.Label
+$lblZip.Text = "Create ZIP:"
+$lblZip.TextAlign = "MiddleLeft"
+$lblZip.Dock = 'Fill'
+$table.Controls.Add($lblZip, 0, 3)
 
-$lblExclude = New-Object Windows.Forms.Label
-$lblExclude.Text = "Exclude Extensions (comma separated):"
-$lblExclude.Location = '10,130'
-$lblExclude.Size = '250,25'
-$panel.Controls.Add($lblExclude)
+$chkZip = New-Object Windows.Forms.CheckBox
+$chkZip.Dock = 'Left'
+$chkZip.Checked = [bool]$config.ZipBackup
+$chkZip.Text = "Create a timestamped .zip in destination"
+$chkZip.AutoSize = $true
+$table.Controls.Add($chkZip, 1, 3)
+# leave column 3 empty for alignment
 
-$txtExclude = New-Object Windows.Forms.TextBox
-$txtExclude.Location = '10,160'
-$txtExclude.Size = '560,25'
-$txtExclude.Text = ($config.Exclude -join ", ")
-$panel.Controls.Add($txtExclude)
+# Row 4: Info (spans all columns)
+$lblInfo = New-Object Windows.Forms.Label
+$lblInfo.Text = "Select a folder to backup and a destination folder. All files/subfolders will be copied (excluded extensions can be set in config). If 'Create ZIP' is checked the source folder will be zipped into the destination instead of copying files individually."
+$lblInfo.TextAlign = "MiddleLeft"
+$lblInfo.Dock = 'Fill'
+$lblInfo.ForeColor = [Drawing.Color]::FromArgb(100,100,120)
+$table.Controls.Add($lblInfo, 0, 4)
+$table.SetColumnSpan($lblInfo, 3)
 
-$btnSave = New-Object Windows.Forms.Button
-$btnSave.Text = "Save Config"
-$btnSave.Location = '10,200'
-$btnSave.Size = '120,35'
-$btnSave.BackColor = [Drawing.Color]::FromArgb(220,220,220)
-$btnSave.Add_Click({
-    $config.SourcePath = $txtSource.Text
-    $config.TargetPath = $txtTarget.Text
-    $config.LogFile = (Join-Path $configDir "backup.log")
-    $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
-    Save-Config $config
-    [Windows.Forms.MessageBox]::Show("Config saved.")
-})
-$panel.Controls.Add($btnSave)
+# Row 5: Spacer
+$spacer = New-Object Windows.Forms.Label
+$spacer.Text = ""
+$table.Controls.Add($spacer, 0, 5)
+$table.SetColumnSpan($spacer, 3)
+
+# Row 6: Buttons (Run, View Log, Exit)
+$btnPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+$btnPanel.Dock = 'Fill'
+$btnPanel.FlowDirection = 'LeftToRight'
+$btnPanel.WrapContents = $false
+$btnPanel.Padding = '0,6,0,0'
+$btnPanel.AutoSize = $false
 
 $btnBackup = New-Object Windows.Forms.Button
 $btnBackup.Text = "Run Backup"
-$btnBackup.Location = '140,200'
-$btnBackup.Size = '120,35'
-$btnBackup.BackColor = [Drawing.Color]::FromArgb(200,220,200)
+$btnBackup.Size = New-Object Drawing.Size(160,42)
+$btnBackup.Font = New-Object Drawing.Font("Segoe UI", 11, [Drawing.FontStyle]::Bold)
+$btnBackup.BackColor = [Drawing.Color]::FromArgb(180,230,180)
+$btnBackup.FlatStyle = 'Flat'
 $btnBackup.Add_Click({
-    $config.SourcePath = $txtSource.Text
-    $config.TargetPath = $txtTarget.Text
-    $config.LogFile = (Join-Path $configDir "backup.log")
-    $config.Exclude = $txtExclude.Text -split ',' | ForEach-Object { $_.Trim() }
-    Save-Config $config
-    if ([string]::IsNullOrWhiteSpace($config.SourcePath) -or [string]::IsNullOrWhiteSpace($config.TargetPath)) {
-        [Windows.Forms.MessageBox]::Show("Source and Target paths must not be empty.")
-    } else {
-        $result = Start-Backup $config
-        [Windows.Forms.MessageBox]::Show($result)
+    $newConfig = [PSCustomObject]@{
+        SourceFolder = $txtSource.Text
+        TargetFolder = $txtTarget.Text
+        LogFile      = (Join-Path $configDir "backup.log")
+        Exclude      = $config.Exclude
+        ZipBackup    = $chkZip.Checked
     }
+    Save-Config $newConfig
+
+    if ([string]::IsNullOrWhiteSpace($newConfig.SourceFolder) -or [string]::IsNullOrWhiteSpace($newConfig.TargetFolder)) {
+        [Windows.Forms.MessageBox]::Show("Please select a source folder and a destination folder.")
+        return
+    }
+
+    $result = Start-Backup $newConfig
+    [Windows.Forms.MessageBox]::Show($result)
+
+    # keep in-memory config in sync
+    $script:config = $newConfig
 })
-$panel.Controls.Add($btnBackup)
+$btnPanel.Controls.Add($btnBackup)
 
 $btnViewLog = New-Object Windows.Forms.Button
 $btnViewLog.Text = "View Log"
-$btnViewLog.Location = '270,200'
-$btnViewLog.Size = '120,35'
-$btnViewLog.BackColor = [Drawing.Color]::FromArgb(220,220,240)
+$btnViewLog.Size = New-Object Drawing.Size(140,42)
+$btnViewLog.Font = New-Object Drawing.Font("Segoe UI", 11)
+$btnViewLog.BackColor = [Drawing.Color]::FromArgb(200,210,240)
+$btnViewLog.FlatStyle = 'Flat'
 $btnViewLog.Add_Click({
     $logFile = (Join-Path $configDir "backup.log")
     if (Test-Path $logFile) {
         $logContent = Get-Content $logFile -Raw
         $logForm = New-Object Windows.Forms.Form
         $logForm.Text = "Backup Log"
-        $logForm.Size = '500,400'
+        $logForm.Size = New-Object Drawing.Size(800,420)
         $txtLogView = New-Object Windows.Forms.TextBox
         $txtLogView.Multiline = $true
         $txtLogView.ScrollBars = "Vertical"
@@ -242,14 +289,18 @@ $btnViewLog.Add_Click({
         [Windows.Forms.MessageBox]::Show("Log file not found.")
     }
 })
-$panel.Controls.Add($btnViewLog)
+$btnPanel.Controls.Add($btnViewLog)
 
 $btnExit = New-Object Windows.Forms.Button
 $btnExit.Text = "Exit"
-$btnExit.Location = '410,200'
-$btnExit.Size = '120,35'
+$btnExit.Size = New-Object Drawing.Size(140,42)
+$btnExit.Font = New-Object Drawing.Font("Segoe UI", 11)
 $btnExit.BackColor = [Drawing.Color]::FromArgb(240,200,200)
+$btnExit.FlatStyle = 'Flat'
 $btnExit.Add_Click({ $form.Close() })
-$panel.Controls.Add($btnExit)
+$btnPanel.Controls.Add($btnExit)
+
+$table.Controls.Add($btnPanel, 0, 6)
+$table.SetColumnSpan($btnPanel, 3)
 
 [void]$form.ShowDialog()
