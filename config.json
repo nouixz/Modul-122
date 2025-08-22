@@ -1,0 +1,6 @@
+{
+  "SourcePath": "C:\\Quelle",
+  "TargetPath": "C:\\Backup",
+  "LogFile": ".\\backup.log",
+  "Exclude": [".tmp", ".log"]
+}
