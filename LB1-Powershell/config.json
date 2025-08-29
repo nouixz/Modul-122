@@ -1,6 +1,0 @@
-{
-  "SourceFolder": "/tmp/backup-test/source",
-  "TargetFolder": "/tmp/backup-test/target",
-  "ZipBackup": true,
-  "LogFile": "./LB1-Powershell/backup.log"
-}

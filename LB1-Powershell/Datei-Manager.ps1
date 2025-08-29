@@ -174,27 +174,38 @@ function Resolve-ConfigPath {
 function Get-NextVersionedPath {
     param(
         [Parameter(Mandatory)][string]$BasePath,
-        [string]$VersionFormat = '_v{0}'
+        # Suffix pattern: date + "_v" + version (e.g., _24-08-2025_v1)
+        [string]$VersionFormat = '_{DATE}_v{0}'
     )
-    
+
     $directory = Split-Path -Path $BasePath -Parent
-    $filename = [System.IO.Path]::GetFileNameWithoutExtension($BasePath)
+    $filename  = [System.IO.Path]::GetFileNameWithoutExtension($BasePath)
     $extension = [System.IO.Path]::GetExtension($BasePath)
-    
-    # If the original file doesn't exist, return the original path
+
+    # If the original path doesn't exist, return it unchanged
     if (-not (Test-Path -LiteralPath $BasePath)) {
         return $BasePath
     }
-    
-    # Find the next available version number
+
+    # Build requested date pattern, then sanitize for file-system safety
+    $now = Get-Date
+    $vf  = $VersionFormat
+    # New token
+    $vf  = $vf -replace '\{DATE\}', $now.ToString('dd-MM-yyyy')
+    # Backward compatibility with previous tokens
+    $vf  = $vf -replace 'DD',   $now.ToString('dd')
+    $vf  = $vf -replace 'MM',   $now.ToString('MM')
+    $vf  = $vf -replace 'YEAR', $now.ToString('yyyy')
+
     $version = 1
     do {
-        $versionSuffix = $VersionFormat -f $version
-        $versionedName = "$filename$versionSuffix$extension"
-        $versionedPath = Join-Path $directory $versionedName
+        $suffixRaw  = $vf -f $version
+        $suffixSafe = $suffixRaw -replace '[\\\/:*?"<>|]', '-'  # sanitize invalid filename chars
+        $versionedName = "$filename$suffixSafe$extension"
+        $versionedPath = if ([string]::IsNullOrWhiteSpace($directory)) { $versionedName } else { Join-Path $directory $versionedName }
         $version++
     } while (Test-Path -LiteralPath $versionedPath)
-    
+
     Write-Log "Created versioned path: $versionedPath (version $($version-1))"
     return $versionedPath
 }
