@@ -11,8 +11,8 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Konfiguration & Log – im Skriptordner
-$Script:ConfigPath = Join-Path -Path $PSScriptRoot -ChildPath 'config.json'
+# Konfiguration & Log – im Skriptordner (separate Configs für unterschiedliche Tools)
+$Script:ConfigPath = Join-Path -Path $PSScriptRoot -ChildPath 'datei-manager-config.json'
 $Script:LogFile    = Join-Path -Path $PSScriptRoot -ChildPath 'DateiManager.log'
 
 function Get-DefaultConfig {
@@ -72,7 +72,7 @@ function Resolve-ConfigPath {
     param([Parameter(Mandatory)][string]$Path)
     # Already absolute
     if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
-            Write-er)
+    # Handle relative paths starting with ./
     if ($Path -match '^[.][\\/]') {
         $parent = Split-Path -Path $PSScriptRoot -Parent
         $trimmed = $Path -replace '^[.][\\/]', ''
@@ -321,7 +321,7 @@ function Start-FileManagerGUI {
         $dest  = $tbTarget.Text.Trim()
         if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
         if ([string]::IsNullOrWhiteSpace($dest)) { [System.Windows.Forms.MessageBox]::Show('Zielordner angeben.','Hinweis') | Out-Null; return }
-    New-DirectoryIfMissing $dest
+        New-DirectoryIfMissing $dest
         $ok = 0; $fail = 0
         foreach ($p in $paths) {
             try { Move-Item -LiteralPath $p -Destination $dest -Force; $ok++; Write-Log "Verschoben: $p -> $dest" } catch { $fail++; Write-Log "Fehler Verschieben: $p -> $dest :: $($_.Exception.Message)" 'ERROR' }
@@ -362,36 +362,87 @@ function Start-FileManagerGUI {
 
     $btnCreateZip.Add_Click({
         $paths = Get-SelectedFilePaths
-        if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
+        if (-not $paths) { 
+            [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt. Bitte markieren Sie Dateien mit den Checkboxen in der Liste.','ZIP-Erstellung - Hinweis') | Out-Null
+            return 
+        }
         $zipPath = $tbZip.Text.Trim()
-        if ([string]::IsNullOrWhiteSpace($zipPath)) { [System.Windows.Forms.MessageBox]::Show('Bitte Pfad für ZIP-Datei angeben.','Hinweis') | Out-Null; return }
+        if ([string]::IsNullOrWhiteSpace($zipPath)) { 
+            [System.Windows.Forms.MessageBox]::Show('Bitte geben Sie einen Pfad für die ZIP-Datei an. Verwenden Sie den "..." Button zum Auswählen.','ZIP-Erstellung - Pfad erforderlich') | Out-Null
+            return 
+        }
+        
         # Stelle sicher, dass Endung .zip vorhanden ist
         if ([System.IO.Path]::GetExtension($zipPath) -ne '.zip') { $zipPath = "$zipPath.zip" }
+        
         $zipDir = Split-Path -Path $zipPath -Parent
         if (-not $zipDir) { $zipDir = $PSScriptRoot }
         New-DirectoryIfMissing $zipDir
+        
         try {
-            if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+            $lblStatus.Text = 'ZIP wird erstellt...'
+            if (Test-Path -LiteralPath $zipPath) { 
+                $result = [System.Windows.Forms.MessageBox]::Show("Die ZIP-Datei '$zipPath' existiert bereits. Überschreiben?", 'ZIP-Erstellung - Überschreiben?', 'YesNo', 'Question')
+                if ($result -ne 'Yes') { 
+                    $lblStatus.Text = 'ZIP-Erstellung abgebrochen'
+                    return 
+                }
+                Remove-Item -LiteralPath $zipPath -Force 
+            }
+            
             Compress-Archive -Path $paths -DestinationPath $zipPath -Force
             Write-Log "ZIP erstellt: $zipPath mit $($paths.Count) Dateien"
-            $lblStatus.Text = 'ZIP erstellt'
+            $lblStatus.Text = "ZIP erfolgreich erstellt: $($paths.Count) Dateien"
+            [System.Windows.Forms.MessageBox]::Show("ZIP-Datei erfolgreich erstellt:`n$zipPath`n`nAnzahl Dateien: $($paths.Count)", 'ZIP-Erstellung - Erfolgreich', 'OK', 'Information') | Out-Null
         } catch {
-            Write-Log "Fehler ZIP: $($_.Exception.Message)" 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("Fehler: $($_.Exception.Message)",'Fehler') | Out-Null
+            $errorMsg = "Fehler bei ZIP-Erstellung: $($_.Exception.Message)"
+            Write-Log $errorMsg 'ERROR'
+            $lblStatus.Text = 'ZIP-Erstellung fehlgeschlagen'
+            [System.Windows.Forms.MessageBox]::Show($errorMsg, 'ZIP-Erstellung - Fehler', 'OK', 'Error') | Out-Null
         }
     })
 
     $btnBackup.Add_Click({
         $paths = Get-SelectedFilePaths
         $dest  = $tbBackup.Text.Trim()
-        if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
-    if ([string]::IsNullOrWhiteSpace($dest)) { [System.Windows.Forms.MessageBox]::Show('Backup-Ordner angeben.','Hinweis') | Out-Null; return }
-    New-DirectoryIfMissing $dest
-        $ok=0; $fail=0
-        foreach ($p in $paths) {
-            try { Copy-Item -LiteralPath $p -Destination $dest -Force; $ok++; Write-Log "Backup: $p -> $dest" } catch { $fail++; Write-Log "Fehler Backup: $p -> $dest :: $($_.Exception.Message)" 'ERROR' }
+        if (-not $paths) { 
+            [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt. Bitte markieren Sie Dateien mit den Checkboxen in der Liste.','Backup - Hinweis') | Out-Null
+            return 
         }
-        $lblStatus.Text = "Backup beendet – OK:$ok FEHLER:$fail"
+        if ([string]::IsNullOrWhiteSpace($dest)) { 
+            [System.Windows.Forms.MessageBox]::Show('Bitte geben Sie einen Backup-Ordner an. Verwenden Sie den "..." Button zum Auswählen.','Backup - Ordner erforderlich') | Out-Null
+            return 
+        }
+        
+        try {
+            New-DirectoryIfMissing $dest
+            $lblStatus.Text = 'Backup läuft...'
+            $ok=0; $fail=0
+            
+            foreach ($p in $paths) {
+                try { 
+                    Copy-Item -LiteralPath $p -Destination $dest -Force
+                    $ok++
+                    Write-Log "Backup: $p -> $dest" 
+                } catch { 
+                    $fail++
+                    Write-Log "Fehler Backup: $p -> $dest :: $($_.Exception.Message)" 'ERROR' 
+                }
+            }
+            
+            $lblStatus.Text = "Backup abgeschlossen – $ok erfolgreich, $fail Fehler"
+            
+            if ($fail -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show("Backup erfolgreich abgeschlossen!`n`nDateien kopiert: $ok`nZiel: $dest", 'Backup - Erfolgreich', 'OK', 'Information') | Out-Null
+            } else {
+                [System.Windows.Forms.MessageBox]::Show("Backup abgeschlossen mit Fehlern.`n`nErfolgreich: $ok`nFehler: $fail`n`nDetails im Log verfügbar.", 'Backup - Mit Fehlern', 'OK', 'Warning') | Out-Null
+            }
+        } catch {
+            $errorMsg = "Fehler beim Backup: $($_.Exception.Message)"
+            Write-Log $errorMsg 'ERROR'
+            $lblStatus.Text = 'Backup fehlgeschlagen'
+            [System.Windows.Forms.MessageBox]::Show($errorMsg, 'Backup - Fehler', 'OK', 'Error') | Out-Null
+        }
     })
 
     $btnClearSel.Add_Click({ foreach ($it in $lvFiles.Items) { $it.Checked = $false }; $lvFiles.SelectedItems.Clear(); $lblStatus.Text = 'Auswahl aufgehoben' })
