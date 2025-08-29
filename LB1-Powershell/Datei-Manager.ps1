@@ -27,7 +27,7 @@ function Get-DefaultConfig {
     }
 }
 
-function Load-Config {
+function Get-Configuration {
     try {
         if (Test-Path -LiteralPath $Script:ConfigPath) {
             $cfg = Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json -ErrorAction Stop
@@ -43,7 +43,7 @@ function Load-Config {
     }
 }
 
-function Save-Config([object]$cfg) {
+function Set-Configuration([object]$cfg) {
     try { $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath } catch { }
 }
 
@@ -68,6 +68,20 @@ function New-DirectoryIfMissing {
     }
 }
 
+function Resolve-ConfigPath {
+    param([Parameter(Mandatory)][string]$Path)
+    # Already absolute
+    if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
+            Write-er)
+    if ($Path -match '^[.][\\/]') {
+        $parent = Split-Path -Path $PSScriptRoot -Parent
+        $trimmed = $Path -replace '^[.][\\/]', ''
+        return (Join-Path $parent $trimmed)
+    }
+    # Otherwise relative to the script folder
+    return (Join-Path $PSScriptRoot $Path)
+}
+
 # Sicherstellen: GUI in STA – erforderlich für Dialoge
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     try {
@@ -90,8 +104,12 @@ function Start-FileManagerGUI {
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
     # Konfiguration laden
-    $cfg = Load-Config
-    if ($cfg.LogFile) { $Script:LogFile = [string]$cfg.LogFile }
+    $cfg = Get-Configuration
+    if ($cfg.LogFile) {
+        $lf = [string]$cfg.LogFile
+        if ([string]::IsNullOrWhiteSpace($lf)) { $lf = 'DateiManager.log' }
+        $Script:LogFile = Resolve-ConfigPath -Path $lf
+    }
     New-DirectoryIfMissing (Split-Path -Path $Script:LogFile -Parent)
 
     # Form
@@ -148,7 +166,7 @@ function Start-FileManagerGUI {
 
     # Aktionen
     $gbActions = New-Object System.Windows.Forms.GroupBox
-    $gbActions.Text = 'Aktionen'
+    $gbActions.Text = 'Aktionen – Schritte: 1) Dateien wählen  2) Ziel/ZIP/Backup setzen  3) Button drücken'
     $gbActions.Location = New-Object System.Drawing.Point(12,470)
     $gbActions.Size = New-Object System.Drawing.Size(930,150)
 
@@ -192,10 +210,15 @@ function Start-FileManagerGUI {
     $tbZip.Width = 640
     $tbZip.Text = if ($cfg.DefaultZipPath) { [string]$cfg.DefaultZipPath } else { (Join-Path $PSScriptRoot 'Archiv.zip') }
 
-    $btnZip = New-Object System.Windows.Forms.Button
-    $btnZip.Text = 'ZIP erstellen'
-    $btnZip.Location = New-Object System.Drawing.Point(740,55)
-    $btnZip.Width = 30
+    $btnZipBrowse = New-Object System.Windows.Forms.Button
+    $btnZipBrowse.Text = '…'
+    $btnZipBrowse.Location = New-Object System.Drawing.Point(740,55)
+    $btnZipBrowse.Width = 30
+
+    $btnCreateZip = New-Object System.Windows.Forms.Button
+    $btnCreateZip.Text = 'ZIP erstellen'
+    $btnCreateZip.Location = New-Object System.Drawing.Point(470,120)
+    $btnCreateZip.Width = 140
 
     $lblBackup = New-Object System.Windows.Forms.Label
     $lblBackup.Text = 'Backup-Ordner:'
@@ -221,6 +244,11 @@ function Start-FileManagerGUI {
     $btnClearSel.Text = 'Auswahl aufheben'
     $btnClearSel.Location = New-Object System.Drawing.Point(180,120)
     $btnClearSel.Width = 150
+
+    $btnSelectAll = New-Object System.Windows.Forms.Button
+    $btnSelectAll.Text = 'Alle auswählen'
+    $btnSelectAll.Location = New-Object System.Drawing.Point(340,120)
+    $btnSelectAll.Width = 120
 
     # Statusleiste
     $status = New-Object System.Windows.Forms.StatusStrip
@@ -332,11 +360,13 @@ function Start-FileManagerGUI {
         $lblStatus.Text = 'Umbenennen abgeschlossen'
     })
 
-    $btnZip.Add_Click({
+    $btnCreateZip.Add_Click({
         $paths = Get-SelectedFilePaths
         if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
         $zipPath = $tbZip.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($zipPath)) { [System.Windows.Forms.MessageBox]::Show('Bitte Pfad für ZIP-Datei angeben.','Hinweis') | Out-Null; return }
+        # Stelle sicher, dass Endung .zip vorhanden ist
+        if ([System.IO.Path]::GetExtension($zipPath) -ne '.zip') { $zipPath = "$zipPath.zip" }
         $zipDir = Split-Path -Path $zipPath -Parent
         if (-not $zipDir) { $zipDir = $PSScriptRoot }
         New-DirectoryIfMissing $zipDir
@@ -365,6 +395,18 @@ function Start-FileManagerGUI {
     })
 
     $btnClearSel.Add_Click({ foreach ($it in $lvFiles.Items) { $it.Checked = $false }; $lvFiles.SelectedItems.Clear(); $lblStatus.Text = 'Auswahl aufgehoben' })
+    $btnSelectAll.Add_Click({ foreach ($it in $lvFiles.Items) { $it.Checked = $true } ; $lblStatus.Text = 'Alle markiert' })
+
+    # ZIP Pfad auswählen
+    $btnZipBrowse.Add_Click({
+        $sfd = New-Object System.Windows.Forms.SaveFileDialog
+        $sfd.Title = 'ZIP-Datei speichern'
+        $sfd.Filter = 'ZIP-Archiv (*.zip)|*.zip|Alle Dateien (*.*)|*.*'
+        $sfd.FileName = if ($tbZip.Text) { [System.IO.Path]::GetFileName($tbZip.Text) } else { 'Archiv.zip' }
+        $sfd.InitialDirectory = if ($tbZip.Text) { (Split-Path -Path $tbZip.Text -Parent) } else { $PSScriptRoot }
+        if ($sfd.ShowDialog() -eq 'OK') { $tbZip.Text = $sfd.FileName }
+        $sfd.Dispose()
+    })
 
     # Folder/Target/Backup Dialoge
     $btnBrowseFolder.Add_Click({
@@ -394,9 +436,30 @@ function Start-FileManagerGUI {
     $form.Controls.AddRange(@($lblFolder,$tbFolder,$btnBrowseFolder,$lblExt,$tbExt,$btnSearch,$lvFiles,$gbActions,$status))
     $gbActions.Controls.AddRange(@(
         $lblTarget,$tbTarget,$btnBrowseTarget,$btnCopy,$btnMove,$btnRename,
-        $lblZip,$tbZip,$btnZip,
-        $lblBackup,$tbBackup,$btnBrowseBackup,$btnBackup,$btnClearSel
+        $lblZip,$tbZip,$btnZipBrowse,
+        $lblBackup,$tbBackup,$btnBrowseBackup,$btnBackup,$btnClearSel,$btnSelectAll,$btnCreateZip
     ))
+
+    # Tooltips
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    $toolTip.AutoPopDelay = 8000
+    $toolTip.InitialDelay = 500
+    $toolTip.ReshowDelay  = 200
+    $toolTip.ShowAlways   = $true
+    $toolTip.SetToolTip($tbExt,'Dateierweiterung ohne Punkt (z.B. txt, jpg). Leer lassen für alle Dateien.')
+    $toolTip.SetToolTip($btnSearch,'1) Ordner wählen, 2) Erweiterung eingeben, 3) Suchen klicken')
+    $toolTip.SetToolTip($lvFiles,'Aktivieren Sie die Checkboxen für Dateien, die verarbeitet werden sollen.')
+    $toolTip.SetToolTip($tbTarget,'Zielordner für Kopieren/Verschieben')
+    $toolTip.SetToolTip($btnCopy,'Ausgewählte Dateien in Zielordner kopieren')
+    $toolTip.SetToolTip($btnMove,'Ausgewählte Dateien in Zielordner verschieben')
+    $toolTip.SetToolTip($btnRename,'Markierte Datei in der Liste umbenennen (eine oder mehrere)')
+    $toolTip.SetToolTip($tbZip,'Pfad zur zu erstellenden ZIP-Datei')
+    $toolTip.SetToolTip($btnZipBrowse,'Speicherort/Dateinamen der ZIP-Datei wählen')
+    $toolTip.SetToolTip($btnCreateZip,'Ausgewählte Dateien zu ZIP-Archiv zusammenfassen')
+    $toolTip.SetToolTip($tbBackup,'Ordner, in den die Sicherungskopien erstellt werden')
+    $toolTip.SetToolTip($btnBackup,'Ausgewählte Dateien in den Backup-Ordner kopieren')
+    $toolTip.SetToolTip($btnClearSel,'Alle Häkchen entfernen')
+    $toolTip.SetToolTip($btnSelectAll,'Alle Dateien anhaken')
 
     # Startstatus
     Write-Log 'GUI gestartet'
@@ -411,7 +474,7 @@ function Start-FileManagerGUI {
             LogFile             = $Script:LogFile
             Window              = @{ Width = $form.Width; Height = $form.Height }
         }
-        Save-Config $save
+    Set-Configuration $save
         Write-Log 'Konfiguration gespeichert'
     })
     [System.Windows.Forms.Application]::Run($form)
