@@ -1,9 +1,6 @@
 {
-  "DefaultFolder": "",
-  "DefaultExtension": "txt",
-  "DefaultTarget": "",
-  "DefaultBackupFolder": "",
-  "DefaultZipPath": "",
-  "LogFile": "./LB1-Powershell/DateiManager.log",
-  "Window": { "Width": 980, "Height": 700 }
+  "SourceFolder": "/tmp/backup-test/source",
+  "TargetFolder": "/tmp/backup-test/target",
+  "ZipBackup": true,
+  "LogFile": "./LB1-Powershell/backup.log"
 }

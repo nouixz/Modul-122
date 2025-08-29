@@ -1,0 +1,11 @@
+2025-08-29 07:44:36 [INFO] BackupTool gestartet
+2025-08-29 07:46:39 [INFO] BackupTool gestartet
+2025-08-29 07:49:37 [INFO] BackupTool gestartet
+2025-08-29 07:52:07 [INFO] Backup gestartet - Quelle: '/tmp/backup-test/source' Ziel: '/tmp/backup-test/target' ZIP: False
+2025-08-29 07:52:07 [INFO] Verzeichnis erstellt: /tmp/backup-test/target
+2025-08-29 07:52:07 [INFO] Erstelle Ordner-Backup: /tmp/backup-test/target/source_backup_20250829_075207
+2025-08-29 07:52:23 [INFO] Ordner-Backup erfolgreich erstellt: /tmp/backup-test/target/source_backup_20250829_075207
+2025-08-29 07:52:23 [INFO] Backup gestartet - Quelle: '/tmp/backup-test/source' Ziel: '/tmp/backup-test/target' ZIP: True
+2025-08-29 07:52:23 [INFO] Erstelle ZIP-Backup: /tmp/backup-test/target/source_backup_20250829_075223.zip
+2025-08-29 07:52:29 [INFO] ZIP-Backup erfolgreich erstellt: /tmp/backup-test/target/source_backup_20250829_075223.zip
+2025-08-29 07:52:30 [INFO] Konfiguration gespeichert
