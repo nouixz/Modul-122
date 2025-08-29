@@ -1,0 +1,15 @@
+{
+  "DefaultFolder": "/tmp/updated-source",
+  "DefaultExtension": "txt",
+  "DefaultTarget": "/tmp/updated-target",
+  "DefaultBackupFolder": "/tmp/Backup",
+  "DefaultZipPath": "/tmp/Archiv.zip",
+  "LogFile": "/tmp/DateiManager.log",
+  "Window": {
+    "Width": 980,
+    "Height": 700
+  },
+  "SourceFolder": "",
+  "TargetFolder": "",
+  "ZipBackup": false
+}

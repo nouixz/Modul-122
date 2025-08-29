@@ -72,5 +72,19 @@ Backup-Ergebnis
 
 ## Hinweise & Grenzen
 - ZIP-Erstellung nutzt .NET ZipFile. Falls nicht verfügbar, wird der Fehler geloggt.
+- **Versioning**: Wenn eine ZIP-Datei oder ein Backup-Ordner bereits existiert, wird automatisch eine versionierte Kopie erstellt (z.B. `Archiv_v1.zip`, `Backup_v1`) statt zu überschreiben.
+- **Konfiguration**: Das Tool verwendet sowohl `config.json` (README-Format) als auch `datei-manager-config.json` (internes Format) für maximale Kompatibilität.
 - Datei-Tools und Prozess-Manager sind bewusst einfach gehalten; auf sensible Pfade/Prozesse achten.
+
+## Neue Funktionen
+
+### Automatisches Versioning
+- ZIP-Dateien: Statt zu überschreiben wird automatisch eine neue Version erstellt (`Archiv.zip` → `Archiv_v1.zip` → `Archiv_v2.zip`)
+- Backup-Ordner: Gleiches Versioning-System für Backup-Ordner (`Backup` → `Backup_v1` → `Backup_v2`)
+- Keine Überschreibung: Bestehende Dateien/Ordner bleiben erhalten
+
+### Verbesserte Konfiguration
+- Unterstützt sowohl das `config.json` Format (aus README) als auch das interne Format
+- Automatische Migration zwischen Konfigurationsformaten
+- Relative Pfade werden korrekt aufgelöst
 

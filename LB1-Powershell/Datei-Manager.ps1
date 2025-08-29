@@ -17,6 +17,7 @@ $Script:LogFile    = Join-Path -Path $PSScriptRoot -ChildPath 'DateiManager.log'
 
 function Get-DefaultConfig {
     return [pscustomobject]@{
+        # Keep existing fields for backward compatibility
         DefaultFolder      = (Get-Location).Path
         DefaultExtension   = 'txt'
         DefaultTarget      = ''
@@ -24,27 +25,104 @@ function Get-DefaultConfig {
         DefaultZipPath     = (Join-Path $PSScriptRoot 'Archiv.zip')
         LogFile            = (Join-Path $PSScriptRoot 'DateiManager.log')
         Window             = @{ Width = 980; Height = 700 }
+        
+        # Add fields from config.json format (README)
+        SourceFolder       = ''
+        TargetFolder       = ''
+        ZipBackup          = $false
     }
 }
 
 function Get-Configuration {
     try {
-        if (Test-Path -LiteralPath $Script:ConfigPath) {
-            $cfg = Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json -ErrorAction Stop
-            if ($null -eq $cfg) { return Get-DefaultConfig }
-            return $cfg
-        } else {
-            $def = Get-DefaultConfig
-            $def | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath
-            return $def
+        $mainConfig = $null
+        $legacyConfig = $null
+        
+        # Try to load the main config.json (README format)
+        $mainConfigPath = Join-Path $PSScriptRoot 'config.json'
+        if (Test-Path -LiteralPath $mainConfigPath) {
+            try {
+                $mainConfig = Get-Content -Raw -LiteralPath $mainConfigPath | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                Write-Log "Error reading config.json: $($_.Exception.Message)" 'WARN'
+            }
         }
+        
+        # Try to load the legacy datei-manager-config.json
+        if (Test-Path -LiteralPath $Script:ConfigPath) {
+            try {
+                $legacyConfig = Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                Write-Log "Error reading datei-manager-config.json: $($_.Exception.Message)" 'WARN'
+            }
+        }
+        
+        # Merge configurations, prioritizing main config.json
+        $cfg = Get-DefaultConfig
+        
+        # Apply legacy config first
+        if ($legacyConfig) {
+            if ($legacyConfig.DefaultFolder) { $cfg.DefaultFolder = $legacyConfig.DefaultFolder }
+            if ($legacyConfig.DefaultExtension) { $cfg.DefaultExtension = $legacyConfig.DefaultExtension }
+            if ($legacyConfig.DefaultTarget) { $cfg.DefaultTarget = $legacyConfig.DefaultTarget }
+            if ($legacyConfig.DefaultBackupFolder) { $cfg.DefaultBackupFolder = $legacyConfig.DefaultBackupFolder }
+            if ($legacyConfig.DefaultZipPath) { $cfg.DefaultZipPath = $legacyConfig.DefaultZipPath }
+            if ($legacyConfig.LogFile) { $cfg.LogFile = $legacyConfig.LogFile }
+            if ($legacyConfig.Window) { $cfg.Window = $legacyConfig.Window }
+        }
+        
+        # Apply main config.json, mapping fields appropriately
+        if ($mainConfig) {
+            if ($mainConfig.PSObject.Properties['SourceFolder'] -and $mainConfig.SourceFolder -and $mainConfig.SourceFolder.Trim()) { 
+                $cfg.DefaultFolder = $mainConfig.SourceFolder
+                $cfg.SourceFolder = $mainConfig.SourceFolder 
+            }
+            if ($mainConfig.PSObject.Properties['TargetFolder'] -and $mainConfig.TargetFolder -and $mainConfig.TargetFolder.Trim()) { 
+                $cfg.DefaultTarget = $mainConfig.TargetFolder
+                $cfg.TargetFolder = $mainConfig.TargetFolder
+                $cfg.DefaultBackupFolder = $mainConfig.TargetFolder 
+            }
+            if ($mainConfig.PSObject.Properties['ZipBackup'] -and $null -ne $mainConfig.ZipBackup) { 
+                $cfg.ZipBackup = [bool]$mainConfig.ZipBackup 
+            }
+            if ($mainConfig.PSObject.Properties['LogFile'] -and $mainConfig.LogFile -and $mainConfig.LogFile.Trim()) { 
+                try {
+                    $cfg.LogFile = Resolve-ConfigPath -Path $mainConfig.LogFile.Trim()
+                } catch {
+                    Write-Log "Error resolving LogFile path '$($mainConfig.LogFile)': $($_.Exception.Message)" 'WARN'
+                }
+            }
+        }
+        
+        return $cfg
     } catch {
+        Write-Log "Error in Get-Configuration: $($_.Exception.Message)" 'ERROR'
         return Get-DefaultConfig
     }
 }
 
 function Set-Configuration([object]$cfg) {
-    try { $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath } catch { }
+    try {
+        # Save to legacy format for backward compatibility
+        $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath
+        
+        # Also save/update the main config.json in README format
+        $mainConfigPath = Join-Path $PSScriptRoot 'config.json'
+        $mainConfig = @{
+            SourceFolder = if ($cfg.SourceFolder) { $cfg.SourceFolder } else { $cfg.DefaultFolder }
+            TargetFolder = if ($cfg.TargetFolder) { $cfg.TargetFolder } else { $cfg.DefaultTarget }
+            ZipBackup = if ($null -ne $cfg.ZipBackup) { $cfg.ZipBackup } else { $false }
+            LogFile = if ($cfg.LogFile) { 
+                # Make relative path for portability
+                $relativePath = [System.IO.Path]::GetRelativePath($PSScriptRoot, $cfg.LogFile)
+                if ($relativePath.StartsWith('..')) { $cfg.LogFile } else { "./$relativePath" }
+            } else { "./DateiManager.log" }
+        }
+        $mainConfig | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $mainConfigPath
+        Write-Log "Configuration saved to both config.json and datei-manager-config.json"
+    } catch {
+        Write-Log "Error saving configuration: $($_.Exception.Message)" 'ERROR'
+    }
 }
 
 function Write-Log {
@@ -73,6 +151,14 @@ function New-DirectoryIfMissing {
 
 function Resolve-ConfigPath {
     param([Parameter(Mandatory)][string]$Path)
+    
+    # Handle empty or whitespace-only paths
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Path cannot be empty or whitespace"
+    }
+    
+    $Path = $Path.Trim()
+    
     # Already absolute
     if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
     # Handle relative paths starting with ./
@@ -83,6 +169,34 @@ function Resolve-ConfigPath {
     }
     # Otherwise relative to the script folder
     return (Join-Path $PSScriptRoot $Path)
+}
+
+function Get-NextVersionedPath {
+    param(
+        [Parameter(Mandatory)][string]$BasePath,
+        [string]$VersionFormat = '_v{0}'
+    )
+    
+    $directory = Split-Path -Path $BasePath -Parent
+    $filename = [System.IO.Path]::GetFileNameWithoutExtension($BasePath)
+    $extension = [System.IO.Path]::GetExtension($BasePath)
+    
+    # If the original file doesn't exist, return the original path
+    if (-not (Test-Path -LiteralPath $BasePath)) {
+        return $BasePath
+    }
+    
+    # Find the next available version number
+    $version = 1
+    do {
+        $versionSuffix = $VersionFormat -f $version
+        $versionedName = "$filename$versionSuffix$extension"
+        $versionedPath = Join-Path $directory $versionedName
+        $version++
+    } while (Test-Path -LiteralPath $versionedPath)
+    
+    Write-Log "Created versioned path: $versionedPath (version $($version-1))"
+    return $versionedPath
 }
 
 # Sicherstellen: GUI in STA – erforderlich für Dialoge
@@ -387,19 +501,14 @@ function Start-FileManagerGUI {
         
         try {
             $lblStatus.Text = 'ZIP wird erstellt...'
-            if (Test-Path -LiteralPath $zipPath) { 
-                $result = [System.Windows.Forms.MessageBox]::Show("Die ZIP-Datei '$zipPath' existiert bereits. Überschreiben?", 'ZIP-Erstellung - Überschreiben?', 'YesNo', 'Question')
-                if ($result -ne 'Yes') { 
-                    $lblStatus.Text = 'ZIP-Erstellung abgebrochen'
-                    return 
-                }
-                Remove-Item -LiteralPath $zipPath -Force 
-            }
             
-            Compress-Archive -LiteralPath $paths -DestinationPath $zipPath -Force
-            Write-Log "ZIP erstellt: $zipPath mit $($paths.Count) Dateien"
+            # Use versioning instead of overwriting
+            $finalZipPath = Get-NextVersionedPath -BasePath $zipPath
+            
+            Compress-Archive -LiteralPath $paths -DestinationPath $finalZipPath -Force
+            Write-Log "ZIP erstellt: $finalZipPath mit $($paths.Count) Dateien"
             $lblStatus.Text = "ZIP erfolgreich erstellt: $($paths.Count) Dateien"
-            [System.Windows.Forms.MessageBox]::Show("ZIP-Datei erfolgreich erstellt:`n$zipPath`n`nAnzahl Dateien: $($paths.Count)", 'ZIP-Erstellung - Erfolgreich', 'OK', 'Information') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show("ZIP-Datei erfolgreich erstellt:`n$finalZipPath`n`nAnzahl Dateien: $($paths.Count)", 'ZIP-Erstellung - Erfolgreich', 'OK', 'Information') | Out-Null
         } catch {
             $errorMsg = "Fehler bei ZIP-Erstellung: $($_.Exception.Message)"
             Write-Log $errorMsg 'ERROR'
@@ -421,28 +530,31 @@ function Start-FileManagerGUI {
         }
         
         try {
-        $destFull = [System.IO.Path]::GetFullPath($dest)
-        New-DirectoryIfMissing $destFull
+            # Use versioning for backup folder
+            $finalDestPath = Get-NextVersionedPath -BasePath $dest
+            $destFull = [System.IO.Path]::GetFullPath($finalDestPath)
+            New-DirectoryIfMissing $destFull
+            
             $lblStatus.Text = 'Backup läuft...'
             $ok=0; $fail=0
             
             foreach ($p in $paths) {
                 try { 
-            Copy-Item -LiteralPath $p -Destination $destFull -Force
+                    Copy-Item -LiteralPath $p -Destination $destFull -Force
                     $ok++
-            Write-Log "Backup: $p -> $destFull" 
+                    Write-Log "Backup: $p -> $destFull" 
                 } catch { 
                     $fail++
-            Write-Log "Fehler Backup: $p -> $destFull :: $($_.Exception.Message)" 'ERROR' 
+                    Write-Log "Fehler Backup: $p -> $destFull :: $($_.Exception.Message)" 'ERROR' 
                 }
             }
             
             $lblStatus.Text = "Backup abgeschlossen – $ok erfolgreich, $fail Fehler"
             
             if ($fail -eq 0) {
-                [System.Windows.Forms.MessageBox]::Show("Backup erfolgreich abgeschlossen!`n`nDateien kopiert: $ok`nZiel: $dest", 'Backup - Erfolgreich', 'OK', 'Information') | Out-Null
+                [System.Windows.Forms.MessageBox]::Show("Backup erfolgreich abgeschlossen!`n`nDateien kopiert: $ok`nZiel: $finalDestPath", 'Backup - Erfolgreich', 'OK', 'Information') | Out-Null
             } else {
-                [System.Windows.Forms.MessageBox]::Show("Backup abgeschlossen mit Fehlern.`n`nErfolgreich: $ok`nFehler: $fail`n`nDetails im Log verfügbar.", 'Backup - Mit Fehlern', 'OK', 'Warning') | Out-Null
+                [System.Windows.Forms.MessageBox]::Show("Backup abgeschlossen mit Fehlern.`n`nErfolgreich: $ok`nFehler: $fail`nZiel: $finalDestPath`n`nDetails im Log verfügbar.", 'Backup - Mit Fehlern', 'OK', 'Warning') | Out-Null
             }
         } catch {
             $errorMsg = "Fehler beim Backup: $($_.Exception.Message)"
@@ -531,8 +643,12 @@ function Start-FileManagerGUI {
             DefaultZipPath      = $tbZip.Text
             LogFile             = $Script:LogFile
             Window              = @{ Width = $form.Width; Height = $form.Height }
+            # Add fields for config.json compatibility
+            SourceFolder        = $tbFolder.Text
+            TargetFolder        = $tbTarget.Text
+            ZipBackup           = $false  # This could be enhanced to track ZIP preference
         }
-    Set-Configuration $save
+        Set-Configuration $save
         Write-Log 'Konfiguration gespeichert'
     })
     [System.Windows.Forms.Application]::Run($form)
