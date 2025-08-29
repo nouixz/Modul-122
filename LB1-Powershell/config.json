@@ -1,9 +1,0 @@
-{
-  "LogFile": ".\\backup.log",
-  "Exclude": [
-    ".tmp",
-    ".log"
-  ],
-  "SourcePath": "",
-  "TargetPath": ""
-}
