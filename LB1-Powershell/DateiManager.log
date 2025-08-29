@@ -1,4 +1,0 @@
-2025-08-29 09:09:08 [INFO] Starte neu im STA-Modus über Windows PowerShell: /Users/chavomoser/Documents/GitHub/PowerShell-Projekt-122/LB1-Powershell/Datei-Manager.ps1
-2025-08-29 09:09:08 [WARN] Konnte nicht im STA-Modus neustarten: An error occurred trying to start process 'powershell.exe' with working directory '/Users/chavomoser/Documents/GitHub/PowerShell-Projekt-122'. No such file or directory
-2025-08-29 09:09:42 [INFO] Starte neu im STA-Modus über Windows PowerShell: /Users/chavomoser/Documents/GitHub/PowerShell-Projekt-122/LB1-Powershell/Datei-Manager.ps1
-2025-08-29 09:09:42 [WARN] Konnte nicht im STA-Modus neustarten: An error occurred trying to start process 'powershell.exe' with working directory '/Users/chavomoser/Documents/GitHub/PowerShell-Projekt-122/LB1-Powershell'. No such file or directory

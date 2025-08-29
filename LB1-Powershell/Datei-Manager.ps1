@@ -11,8 +11,41 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Logdatei im Skriptordner
-$Script:LogFile = Join-Path -Path $PSScriptRoot -ChildPath 'FileManager.log'
+# Konfiguration & Log – im Skriptordner
+$Script:ConfigPath = Join-Path -Path $PSScriptRoot -ChildPath 'config.json'
+$Script:LogFile    = Join-Path -Path $PSScriptRoot -ChildPath 'DateiManager.log'
+
+function Get-DefaultConfig {
+    return [pscustomobject]@{
+        DefaultFolder      = (Get-Location).Path
+        DefaultExtension   = 'txt'
+        DefaultTarget      = ''
+        DefaultBackupFolder= (Join-Path $PSScriptRoot 'Backup')
+        DefaultZipPath     = (Join-Path $PSScriptRoot 'Archiv.zip')
+        LogFile            = (Join-Path $PSScriptRoot 'DateiManager.log')
+        Window             = @{ Width = 980; Height = 700 }
+    }
+}
+
+function Load-Config {
+    try {
+        if (Test-Path -LiteralPath $Script:ConfigPath) {
+            $cfg = Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $cfg) { return Get-DefaultConfig }
+            return $cfg
+        } else {
+            $def = Get-DefaultConfig
+            $def | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath
+            return $def
+        }
+    } catch {
+        return Get-DefaultConfig
+    }
+}
+
+function Save-Config([object]$cfg) {
+    try { $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath } catch { }
+}
 
 function Write-Log {
     param(
@@ -56,11 +89,16 @@ try { Add-Type -AssemblyName Microsoft.VisualBasic } catch { }
 function Start-FileManagerGUI {
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
+    # Konfiguration laden
+    $cfg = Load-Config
+    if ($cfg.LogFile) { $Script:LogFile = [string]$cfg.LogFile }
+    New-DirectoryIfMissing (Split-Path -Path $Script:LogFile -Parent)
+
     # Form
     $form                = New-Object System.Windows.Forms.Form
     $form.Text           = 'Datei-Manager'
     $form.StartPosition  = 'CenterScreen'
-    $form.Size           = New-Object System.Drawing.Size(980,700)
+    $form.Size           = New-Object System.Drawing.Size([int]$cfg.Window.Width,[int]$cfg.Window.Height)
     $form.MinimumSize    = New-Object System.Drawing.Size(940,620)
 
     # Controls – Suche
@@ -72,7 +110,7 @@ function Start-FileManagerGUI {
     $tbFolder = New-Object System.Windows.Forms.TextBox
     $tbFolder.Location = New-Object System.Drawing.Point(80,12)
     $tbFolder.Width = 720
-    $tbFolder.Text = (Get-Location).Path
+    $tbFolder.Text = if ($cfg.DefaultFolder -and (Test-Path -LiteralPath $cfg.DefaultFolder)) { $cfg.DefaultFolder } else { (Get-Location).Path }
 
     $btnBrowseFolder = New-Object System.Windows.Forms.Button
     $btnBrowseFolder.Text = 'Durchsuchen…'
@@ -87,7 +125,7 @@ function Start-FileManagerGUI {
     $tbExt = New-Object System.Windows.Forms.TextBox
     $tbExt.Location = New-Object System.Drawing.Point(100,45)
     $tbExt.Width = 120
-    $tbExt.Text = 'txt'
+    $tbExt.Text = if ($cfg.DefaultExtension) { $cfg.DefaultExtension } else { 'txt' }
 
     $btnSearch = New-Object System.Windows.Forms.Button
     $btnSearch.Text = 'Suchen'
@@ -122,6 +160,7 @@ function Start-FileManagerGUI {
     $tbTarget = New-Object System.Windows.Forms.TextBox
     $tbTarget.Location = New-Object System.Drawing.Point(90,22)
     $tbTarget.Width = 640
+    if ($cfg.DefaultTarget) { $tbTarget.Text = [string]$cfg.DefaultTarget }
 
     $btnBrowseTarget = New-Object System.Windows.Forms.Button
     $btnBrowseTarget.Text = '…'
@@ -151,7 +190,7 @@ function Start-FileManagerGUI {
     $tbZip = New-Object System.Windows.Forms.TextBox
     $tbZip.Location = New-Object System.Drawing.Point(90,57)
     $tbZip.Width = 640
-    $tbZip.Text = (Join-Path $PSScriptRoot 'Archiv.zip')
+    $tbZip.Text = if ($cfg.DefaultZipPath) { [string]$cfg.DefaultZipPath } else { (Join-Path $PSScriptRoot 'Archiv.zip') }
 
     $btnZip = New-Object System.Windows.Forms.Button
     $btnZip.Text = 'ZIP erstellen'
@@ -166,7 +205,7 @@ function Start-FileManagerGUI {
     $tbBackup = New-Object System.Windows.Forms.TextBox
     $tbBackup.Location = New-Object System.Drawing.Point(110,92)
     $tbBackup.Width = 620
-    $tbBackup.Text = (Join-Path $PSScriptRoot 'Backup')
+    $tbBackup.Text = if ($cfg.DefaultBackupFolder) { [string]$cfg.DefaultBackupFolder } else { (Join-Path $PSScriptRoot 'Backup') }
 
     $btnBrowseBackup = New-Object System.Windows.Forms.Button
     $btnBrowseBackup.Text = '…'
@@ -361,6 +400,20 @@ function Start-FileManagerGUI {
 
     # Startstatus
     Write-Log 'GUI gestartet'
+    # Beim Schließen die aktuellen Werte zurück in die Konfiguration schreiben
+    $form.Add_FormClosing({
+        $save = [pscustomobject]@{
+            DefaultFolder       = $tbFolder.Text
+            DefaultExtension    = ($tbExt.Text.Trim().TrimStart('.'))
+            DefaultTarget       = $tbTarget.Text
+            DefaultBackupFolder = $tbBackup.Text
+            DefaultZipPath      = $tbZip.Text
+            LogFile             = $Script:LogFile
+            Window              = @{ Width = $form.Width; Height = $form.Height }
+        }
+        Save-Config $save
+        Write-Log 'Konfiguration gespeichert'
+    })
     [System.Windows.Forms.Application]::Run($form)
     Write-Log 'GUI beendet'
 }
