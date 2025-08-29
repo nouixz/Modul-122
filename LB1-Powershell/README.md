@@ -8,7 +8,7 @@ Konfiguration/Log: `LB1-Powershell/config.json`, `LB1-Powershell/backup.log`
 ## Planung
 
 1) Zweck bestimmen und Skript benennen
-- Name: BackupTool
+- Name: Datei-Manager
 - Zweck: Ordner sichern (kopieren oder als ZIP archivieren) an einen Zielort. Zusätzlich einfache Dateioperationen nach Erweiterung (Terminal) und ein kleiner Prozess-Manager.
 
 2) Skript beschreiben: Was es machen soll
