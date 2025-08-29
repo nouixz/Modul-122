@@ -190,12 +190,17 @@ function Get-NextVersionedPath {
     # Build requested date pattern, then sanitize for file-system safety
     $now = Get-Date
     $vf  = $VersionFormat
-    # New token
-    $vf  = $vf -replace '\{DATE\}', $now.ToString('dd-MM-yyyy')
-    # Backward compatibility with previous tokens
-    $vf  = $vf -replace 'DD',   $now.ToString('dd')
-    $vf  = $vf -replace 'MM',   $now.ToString('MM')
-    $vf  = $vf -replace 'YEAR', $now.ToString('yyyy')
+    # Build requested date pattern, then sanitize for file-system safety
+    $now = Get-Date
+    $vf  = $VersionFormat
+    # New token - replace {DATE} with actual date (fix regex pattern)
+    $vf  = $vf -replace '{DATE}', $now.ToString('dd-MM-yyyy')
+    # Backward compatibility with previous tokens - but only if they haven't been replaced yet
+    if ($vf -notmatch '\d{2}-\d{2}-\d{4}') {
+        $vf  = $vf -replace 'DD',   $now.ToString('dd')
+        $vf  = $vf -replace 'MM',   $now.ToString('MM')
+        $vf  = $vf -replace 'YEAR', $now.ToString('yyyy')
+    }
 
     $version = 1
     do {
@@ -213,10 +218,12 @@ function Get-NextVersionedPath {
 # Sicherstellen: GUI in STA – erforderlich für Dialoge
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     try {
-        if ($PSCommandPath) {
+        if ($PSCommandPath -and $IsWindows) {
             Write-Log "Starte neu im STA-Modus über Windows PowerShell: $PSCommandPath"
             Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-STA','-File',"$PSCommandPath") | Out-Null
             return
+        } elseif (-not $IsWindows) {
+            Write-Log "Skipping STA mode restart on non-Windows platform" 'INFO'
         }
     } catch {
         Write-Log "Konnte nicht im STA-Modus neustarten: $($_.Exception.Message)" 'WARN'
