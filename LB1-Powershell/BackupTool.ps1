@@ -4,7 +4,9 @@
 # - Windows: simple GUI (Windows Forms)
 # - macOS/Linux: simple terminal menu
 
-param()
+param(
+    [switch]$Terminal
+)
 
 # Locations (store next to script for portability)
 $configPath = Join-Path -Path $PSScriptRoot -ChildPath "config.json"
@@ -81,7 +83,7 @@ function Start-Backup($cfg) {
 $cfg = Load-Config
 if (-not $cfg) { $cfg = [pscustomobject]@{ SourceFolder=""; TargetFolder=""; ZipBackup=$false; LogFile=$logPath } }
 
-if ($IsWindows) {
+if ($IsWindows -and -not $Terminal) {
     # Simple Windows GUI
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -123,7 +125,133 @@ if ($IsWindows) {
     [void]$form.ShowDialog()
 }
 else {
-    # Simple terminal menu for macOS/Linux
+    # Simple terminal menu (macOS/Linux or forced with -Terminal)
+    function Prompt-YesNo($message) {
+        $ans = Read-Host "$message (y/n)"
+        return ($ans -match '^(?i)y')
+    }
+
+    function Read-Indices($max) {
+        $raw = Read-Host "Select indexes (e.g. 1,3-5 or 'all')"
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+        if ($raw.Trim().ToLower() -eq 'all') { return 1..$max }
+        $result = @()
+        foreach ($token in $raw.Split(',')) {
+            $token = $token.Trim()
+            if ($token -match '^(\d+)-(\d+)$') {
+                $a = [int]$Matches[1]; $b = [int]$Matches[2]
+                if ($a -le $b) { $result += $a..$b } else { $result += $b..$a }
+            } elseif ($token -match '^\d+$') {
+                $i = [int]$token; if ($i -ge 1 -and $i -le $max) { $result += $i }
+            }
+        }
+        return ($result | Sort-Object -Unique)
+    }
+
+    function Find-FilesByExtension($basePath, $extension) {
+        if (-not (Test-Path $basePath)) { return @() }
+        $ext = $extension.Trim()
+        if ($ext -and -not $ext.StartsWith('.')) { $ext = '.' + $ext }
+        if ([string]::IsNullOrWhiteSpace($ext)) { return @() }
+        return Get-ChildItem -Path $basePath -Recurse -File -Force | Where-Object { $_.Extension -ieq $ext }
+    }
+
+    function Zip-SelectedFiles($basePath, $files, $zipPath) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $staging = Join-Path -Path $PSScriptRoot -ChildPath ("staging_" + (Get-Date -Format 'yyyyMMddHHmmssfff'))
+        try {
+            New-Item -ItemType Directory -Path $staging -Force | Out-Null
+            $sep1 = [IO.Path]::DirectorySeparatorChar; $sep2 = [IO.Path]::AltDirectorySeparatorChar
+            $baseFull = (Resolve-Path $basePath).ProviderPath
+            if (-not ($baseFull.EndsWith($sep1) -or $baseFull.EndsWith($sep2))) { $baseFull += $sep1 }
+            foreach ($f in $files) {
+                $rel = $f.FullName.Substring($baseFull.Length).TrimStart($sep1,$sep2)
+                $dest = Join-Path $staging $rel
+                $destDir = Split-Path $dest
+                if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+                Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
+            }
+            if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($staging, $zipPath)
+            return $true
+        } catch {
+            Write-Log "Zip-SelectedFiles error: $($_.Exception.Message)" $logPath
+            return $false
+        } finally {
+            if (Test-Path $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+        }
+    }
+
+    function File-Tools-ByExtension {
+        Write-Host "\nFile tools by extension"
+        $base = Read-Host "Base path [$($cfg.SourceFolder)]"; if (-not $base) { $base = $cfg.SourceFolder }
+        if (-not (Test-Path $base)) { Write-Host "Path not found."; return }
+        $ext = Read-Host "Extension (e.g. .txt)"
+        $list = @(Find-FilesByExtension -basePath $base -extension $ext)
+        if ($list.Count -eq 0) { Write-Host "No files found."; return }
+        for ($i=0; $i -lt $list.Count; $i++) { Write-Host "[$($i+1)] $($list[$i].FullName)" }
+        $sel = Read-Indices -max $list.Count; if ($sel.Count -eq 0) { Write-Host "Nothing selected."; return }
+        $picked = $sel | ForEach-Object { $list[$_-1] }
+
+        Write-Host "Actions: 1) Copy  2) Move  3) Rename (suffix)  4) Zip to archive  5) Cancel"
+        $act = Read-Host "Choose"
+        switch ($act) {
+            '1' {
+                $dest = Read-Host "Copy to destination path [$($cfg.TargetFolder)]"; if (-not $dest) { $dest = $cfg.TargetFolder }
+                if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+                foreach ($f in $picked) {
+                    try { Copy-Item -LiteralPath $f.FullName -Destination $dest -Force; Write-Log "Copied $($f.FullName) -> $dest" $logPath } catch { Write-Log "Copy error: $($_.Exception.Message)" $logPath }
+                }
+            }
+            '2' {
+                $dest = Read-Host "Move to destination path"
+                if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+                foreach ($f in $picked) {
+                    try { Move-Item -LiteralPath $f.FullName -Destination $dest -Force; Write-Log "Moved $($f.FullName) -> $dest" $logPath } catch { Write-Log "Move error: $($_.Exception.Message)" $logPath }
+                }
+            }
+            '3' {
+                $suffix = Read-Host "Suffix to append before extension (e.g. -old)"
+                foreach ($f in $picked) {
+                    try {
+                        $dir = Split-Path $f.FullName; $name=$f.BaseName; $extn=$f.Extension
+                        $new = Join-Path $dir ("$name$suffix$extn")
+                        Rename-Item -LiteralPath $f.FullName -NewName $new -Force
+                        Write-Log "Renamed $($f.FullName) -> $new" $logPath
+                    } catch { Write-Log "Rename error: $($_.Exception.Message)" $logPath }
+                }
+            }
+            '4' {
+                $zipOut = Read-Host "Zip output file (full path)"
+                if (-not $zipOut) { Write-Host "Canceled."; return }
+                if (Zip-SelectedFiles -basePath $base -files $picked -zipPath $zipOut) {
+                    Write-Host "Created archive: $zipOut"; Write-Log "Created archive: $zipOut" $logPath
+                } else { Write-Host "Failed to create archive." }
+            }
+            default { Write-Host "Canceled." }
+        }
+    }
+
+    function Process-Manager {
+        while ($true) {
+            Write-Host "\nProcess Manager"
+            Write-Host "1) List processes (top 20 by CPU)"
+            Write-Host "2) Find by name"
+            Write-Host "3) Kill by Id"
+            Write-Host "4) Start process"
+            Write-Host "5) Back"
+            $c = Read-Host "Choose"
+            switch ($c) {
+                '1' { Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 | Format-Table Id,ProcessName,CPU,PM -Auto }
+                '2' { $n = Read-Host 'Name contains'; Get-Process | Where-Object { $_.ProcessName -like "*${n}*" } | Format-Table Id,ProcessName,CPU,PM -Auto }
+                '3' { $id = Read-Host 'PID'; try { Stop-Process -Id ([int]$id) -Force; Write-Log "Stopped PID $id" $logPath } catch { Write-Log "Stop error: $($_.Exception.Message)" $logPath } }
+                '4' { $cmd = Read-Host 'Command or path'; if ($cmd) { try { Start-Process -FilePath $cmd; Write-Log "Started: $cmd" $logPath } catch { Write-Log "Start error: $($_.Exception.Message)" $logPath } } }
+                '5' { break }
+                default { Write-Host 'Invalid.' }
+            }
+        }
+    }
+
     while ($true) {
         Write-Host "\nBackup Tool"
         Write-Host "1) Set Source (current: $($cfg.SourceFolder))"
@@ -131,7 +259,9 @@ else {
         Write-Host "3) Toggle ZIP (current: $([bool]$cfg.ZipBackup))"
         Write-Host "4) Run Backup"
         Write-Host "5) View Log"
-        Write-Host "6) Save & Exit"
+        Write-Host "6) File tools by extension"
+        Write-Host "7) Process manager"
+        Write-Host "8) Save & Exit"
         $c = Read-Host "Choose"
         switch ($c) {
             '1' { $inp = Read-Host "Source path"; if ($inp) { $cfg.SourceFolder = $inp } }
@@ -139,7 +269,9 @@ else {
             '3' { $cfg.ZipBackup = -not [bool]$cfg.ZipBackup; Write-Host "ZIP now: $($cfg.ZipBackup)" }
             '4' { $cfg.LogFile = $logPath; Save-Config $cfg; $res = Start-Backup $cfg; Write-Host $res }
             '5' { if (Test-Path $logPath) { Get-Content $logPath | Out-Host } else { Write-Host 'No log yet.' } }
-            '6' { Save-Config $cfg; break }
+            '6' { File-Tools-ByExtension }
+            '7' { Process-Manager }
+            '8' { Save-Config $cfg; break }
             default { Write-Host 'Invalid.' }
         }
     }
