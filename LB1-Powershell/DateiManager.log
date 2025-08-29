@@ -4,3 +4,14 @@
 2025-08-29 07:49:01 [WARN] Konnte nicht im STA-Modus neustarten: An error occurred trying to start process 'powershell.exe' with working directory '/home/runner/work/Modul-122/Modul-122/LB1-Powershell'. No such file or directory
 2025-08-29 07:55:26 [INFO] Starte neu im STA-Modus über Windows PowerShell: /home/runner/work/Modul-122/Modul-122/LB1-Powershell/Datei-Manager.ps1
 2025-08-29 07:55:26 [WARN] Konnte nicht im STA-Modus neustarten: An error occurred trying to start process 'powershell.exe' with working directory '/home/runner/work/Modul-122/Modul-122/LB1-Powershell'. No such file or directory
+2025-08-29 08:30:55 [INFO] Starte neu im STA-Modus über Windows PowerShell: /home/runner/work/Modul-122/Modul-122/LB1-Powershell/Datei-Manager.ps1
+2025-08-29 08:30:55 [WARN] Konnte nicht im STA-Modus neustarten: An error occurred trying to start process 'powershell.exe' with working directory '/home/runner/work/Modul-122/Modul-122/LB1-Powershell'. No such file or directory
+2025-08-29 08:31:33 [INFO] Configuration saved to both config.json and datei-manager-config.json
+2025-08-29 08:32:15 [ERROR] Error in Get-Configuration: Cannot bind argument to parameter 'Path' because it is an empty string.
+2025-08-29 08:32:15 [INFO] Configuration saved to both config.json and datei-manager-config.json
+2025-08-29 08:32:37 [INFO] Processing main config: SourceFolder='/tmp/updated-source', TargetFolder='/tmp/updated-target', ZipBackup='False', LogFile='./DateiManager.log'
+2025-08-29 08:32:38 [INFO] Set DefaultFolder to: /tmp/updated-source
+2025-08-29 08:32:38 [INFO] Set DefaultTarget to: /tmp/updated-target
+2025-08-29 08:32:38 [INFO] Set ZipBackup to: False
+2025-08-29 08:32:38 [ERROR] Error in Get-Configuration: Cannot bind argument to parameter 'Path' because it is an empty string.
+2025-08-29 08:32:38 [INFO] Configuration saved to both config.json and datei-manager-config.json
