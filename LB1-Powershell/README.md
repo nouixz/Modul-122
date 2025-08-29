@@ -2,7 +2,7 @@
 
 Einfaches, portables Backup-Skript mit optionaler ZIP-Erstellung, minimaler Windows-GUI und Terminal-Menü für macOS/Linux. Alle Aktionen werden mit Zeitstempel in eine Logdatei geschrieben.
 
-Script-Datei: `LB1-Powershell/BackupTool.ps1`
+Script-Datei: `LB1-Powershell/BackupTool.ps1` (main tool), `LB1-Powershell/Datei-Manager.ps1` (GUI file manager)
 Konfiguration/Log: `LB1-Powershell/config.json`, `LB1-Powershell/backup.log`
 
 ## Planung
@@ -41,6 +41,7 @@ Konfiguration/Log: `LB1-Powershell/config.json`, `LB1-Powershell/backup.log`
 
 ## Verwendung
 
+**BackupTool (Kommandozeile/Terminal):**
 Windows (GUI)
 ```zsh
 pwsh -File ./LB1-Powershell/BackupTool.ps1
@@ -49,6 +50,16 @@ pwsh -File ./LB1-Powershell/BackupTool.ps1
 macOS/Linux (Terminal-Menü) oder erzwungen auf Windows
 ```zsh
 pwsh -File ./LB1-Powershell/BackupTool.ps1 -Terminal
+```
+
+Direkter Backup-Aufruf
+```zsh
+pwsh -File ./LB1-Powershell/BackupTool.ps1 -SourceFolder "/path/to/source" -TargetFolder "/path/to/backup" -ZipBackup
+```
+
+**Datei-Manager (GUI):**
+```zsh  
+pwsh -File ./LB1-Powershell/Datei-Manager.ps1
 ```
 
 Backup-Ergebnis
