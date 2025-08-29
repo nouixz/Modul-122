@@ -63,8 +63,11 @@ function Write-Log {
 
 function New-DirectoryIfMissing {
     param([Parameter(Mandatory)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        [void](New-Item -ItemType Directory -Path $Path -Force)
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        [void][System.IO.Directory]::CreateDirectory($full)
+    } catch {
+        throw
     }
 }
 
@@ -308,10 +311,11 @@ function Start-FileManagerGUI {
         $dest  = $tbTarget.Text.Trim()
     if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
         if ([string]::IsNullOrWhiteSpace($dest)) { [System.Windows.Forms.MessageBox]::Show('Zielordner angeben.','Hinweis') | Out-Null; return }
-    New-DirectoryIfMissing $dest
+        $destFull = [System.IO.Path]::GetFullPath($dest)
+        New-DirectoryIfMissing $destFull
         $ok = 0; $fail = 0
         foreach ($p in $paths) {
-            try { Copy-Item -LiteralPath $p -Destination $dest -Force; $ok++; Write-Log "Kopiert: $p -> $dest" } catch { $fail++; Write-Log "Fehler Kopieren: $p -> $dest :: $($_.Exception.Message)" 'ERROR' }
+            try { Copy-Item -LiteralPath $p -Destination $destFull -Force; $ok++; Write-Log "Kopiert: $p -> $destFull" } catch { $fail++; Write-Log "Fehler Kopieren: $p -> $destFull :: $($_.Exception.Message)" 'ERROR' }
         }
         $lblStatus.Text = "Kopieren beendet – OK:$ok FEHLER:$fail"
     })
@@ -321,10 +325,11 @@ function Start-FileManagerGUI {
         $dest  = $tbTarget.Text.Trim()
         if (-not $paths) { [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt.','Hinweis') | Out-Null; return }
         if ([string]::IsNullOrWhiteSpace($dest)) { [System.Windows.Forms.MessageBox]::Show('Zielordner angeben.','Hinweis') | Out-Null; return }
-        New-DirectoryIfMissing $dest
+        $destFull = [System.IO.Path]::GetFullPath($dest)
+        New-DirectoryIfMissing $destFull
         $ok = 0; $fail = 0
         foreach ($p in $paths) {
-            try { Move-Item -LiteralPath $p -Destination $dest -Force; $ok++; Write-Log "Verschoben: $p -> $dest" } catch { $fail++; Write-Log "Fehler Verschieben: $p -> $dest :: $($_.Exception.Message)" 'ERROR' }
+            try { Move-Item -LiteralPath $p -Destination $destFull -Force; $ok++; Write-Log "Verschoben: $p -> $destFull" } catch { $fail++; Write-Log "Fehler Verschieben: $p -> $destFull :: $($_.Exception.Message)" 'ERROR' }
         }
         $lblStatus.Text = "Verschieben beendet – OK:$ok FEHLER:$fail"
     })
@@ -374,6 +379,7 @@ function Start-FileManagerGUI {
         
         # Stelle sicher, dass Endung .zip vorhanden ist
         if ([System.IO.Path]::GetExtension($zipPath) -ne '.zip') { $zipPath = "$zipPath.zip" }
+        $zipPath = [System.IO.Path]::GetFullPath($zipPath)
         
         $zipDir = Split-Path -Path $zipPath -Parent
         if (-not $zipDir) { $zipDir = $PSScriptRoot }
@@ -390,7 +396,7 @@ function Start-FileManagerGUI {
                 Remove-Item -LiteralPath $zipPath -Force 
             }
             
-            Compress-Archive -Path $paths -DestinationPath $zipPath -Force
+            Compress-Archive -LiteralPath $paths -DestinationPath $zipPath -Force
             Write-Log "ZIP erstellt: $zipPath mit $($paths.Count) Dateien"
             $lblStatus.Text = "ZIP erfolgreich erstellt: $($paths.Count) Dateien"
             [System.Windows.Forms.MessageBox]::Show("ZIP-Datei erfolgreich erstellt:`n$zipPath`n`nAnzahl Dateien: $($paths.Count)", 'ZIP-Erstellung - Erfolgreich', 'OK', 'Information') | Out-Null
@@ -404,7 +410,7 @@ function Start-FileManagerGUI {
 
     $btnBackup.Add_Click({
         $paths = Get-SelectedFilePaths
-        $dest  = $tbBackup.Text.Trim()
+    $dest  = $tbBackup.Text.Trim()
         if (-not $paths) { 
             [System.Windows.Forms.MessageBox]::Show('Keine Dateien ausgewählt. Bitte markieren Sie Dateien mit den Checkboxen in der Liste.','Backup - Hinweis') | Out-Null
             return 
@@ -415,18 +421,19 @@ function Start-FileManagerGUI {
         }
         
         try {
-            New-DirectoryIfMissing $dest
+        $destFull = [System.IO.Path]::GetFullPath($dest)
+        New-DirectoryIfMissing $destFull
             $lblStatus.Text = 'Backup läuft...'
             $ok=0; $fail=0
             
             foreach ($p in $paths) {
                 try { 
-                    Copy-Item -LiteralPath $p -Destination $dest -Force
+            Copy-Item -LiteralPath $p -Destination $destFull -Force
                     $ok++
-                    Write-Log "Backup: $p -> $dest" 
+            Write-Log "Backup: $p -> $destFull" 
                 } catch { 
                     $fail++
-                    Write-Log "Fehler Backup: $p -> $dest :: $($_.Exception.Message)" 'ERROR' 
+            Write-Log "Fehler Backup: $p -> $destFull :: $($_.Exception.Message)" 'ERROR' 
                 }
             }
             
