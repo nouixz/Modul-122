@@ -17,7 +17,7 @@ $Script:LogFile    = Join-Path -Path $PSScriptRoot -ChildPath 'DateiManager.log'
 
 function Get-DefaultConfig {
     return [pscustomobject]@{
-        # Keep existing fields for backward compatibility
+    # Bisherige Felder für Abwärtskompatibilität beibehalten
         DefaultFolder      = (Get-Location).Path
         DefaultExtension   = 'txt'
         DefaultTarget      = ''
@@ -26,7 +26,7 @@ function Get-DefaultConfig {
         LogFile            = (Join-Path $PSScriptRoot 'DateiManager.log')
         Window             = @{ Width = 980; Height = 700 }
         
-        # Add fields from config.json format (README)
+    # Zusätzliche Felder gemäss config.json (README)
         SourceFolder       = ''
         TargetFolder       = ''
         ZipBackup          = $false
@@ -38,7 +38,7 @@ function Get-Configuration {
         $mainConfig = $null
         $legacyConfig = $null
         
-        # Try to load the main config.json (README format)
+    # Haupt-Konfigurationsdatei config.json (gemäss README) laden
         $mainConfigPath = Join-Path $PSScriptRoot 'config.json'
         if (Test-Path -LiteralPath $mainConfigPath) {
             try {
@@ -48,7 +48,7 @@ function Get-Configuration {
             }
         }
         
-        # Try to load the legacy datei-manager-config.json
+    # Legacy-Datei datei-manager-config.json laden (falls vorhanden)
         if (Test-Path -LiteralPath $Script:ConfigPath) {
             try {
                 $legacyConfig = Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json -ErrorAction Stop
@@ -57,10 +57,10 @@ function Get-Configuration {
             }
         }
         
-        # Merge configurations, prioritizing main config.json
+    # Konfigurationen zusammenführen; config.json hat Priorität
         $cfg = Get-DefaultConfig
         
-        # Apply legacy config first
+    # Zuerst Legacy-Konfiguration anwenden
         if ($legacyConfig) {
             if ($legacyConfig.DefaultFolder) { $cfg.DefaultFolder = $legacyConfig.DefaultFolder }
             if ($legacyConfig.DefaultExtension) { $cfg.DefaultExtension = $legacyConfig.DefaultExtension }
@@ -71,7 +71,7 @@ function Get-Configuration {
             if ($legacyConfig.Window) { $cfg.Window = $legacyConfig.Window }
         }
         
-        # Apply main config.json, mapping fields appropriately
+    # Danach config.json anwenden (Felder entsprechend zuordnen)
         if ($mainConfig) {
             if ($mainConfig.PSObject.Properties['SourceFolder'] -and $mainConfig.SourceFolder -and $mainConfig.SourceFolder.Trim()) { 
                 $cfg.DefaultFolder = $mainConfig.SourceFolder
@@ -103,17 +103,17 @@ function Get-Configuration {
 
 function Set-Configuration([object]$cfg) {
     try {
-        # Save to legacy format for backward compatibility
+        # Für Abwärtskompatibilität zusätzlich im Legacy-Format speichern
         $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $Script:ConfigPath
         
-        # Also save/update the main config.json in README format
+        # Ausserdem Haupt-config.json im README-Format speichern/aktualisieren
         $mainConfigPath = Join-Path $PSScriptRoot 'config.json'
         $mainConfig = @{
             SourceFolder = if ($cfg.SourceFolder) { $cfg.SourceFolder } else { $cfg.DefaultFolder }
             TargetFolder = if ($cfg.TargetFolder) { $cfg.TargetFolder } else { $cfg.DefaultTarget }
             ZipBackup = if ($null -ne $cfg.ZipBackup) { $cfg.ZipBackup } else { $false }
             LogFile = if ($cfg.LogFile) { 
-                # Make relative path for portability
+                # Relativen Pfad für Portabilität bevorzugen
                 $relativePath = [System.IO.Path]::GetRelativePath($PSScriptRoot, $cfg.LogFile)
                 if ($relativePath.StartsWith('..')) { $cfg.LogFile } else { "./$relativePath" }
             } else { "./DateiManager.log" }
@@ -132,9 +132,11 @@ function Write-Log {
     )
     try {
         $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-        "$timestamp [$Level] $Message" | Out-File -Append -FilePath $Script:LogFile -Encoding UTF8
+    $dir = Split-Path -Path $Script:LogFile -Parent
+    if ($dir) { New-DirectoryIfMissing $dir }
+    "$timestamp [$Level] $Message" | Out-File -Append -FilePath $Script:LogFile -Encoding UTF8
     } catch {
-        # Fallback – still avoid throwing from logger
+    # Fallback – Logger darf keine Fehler auslösen
         Write-Host "LOGFEHLER: $Message" -ForegroundColor Yellow
     }
 }
@@ -152,29 +154,29 @@ function New-DirectoryIfMissing {
 function Resolve-ConfigPath {
     param([Parameter(Mandatory)][string]$Path)
     
-    # Handle empty or whitespace-only paths
+    # Leere oder nur aus Leerzeichen bestehende Pfade abweisen
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "Path cannot be empty or whitespace"
     }
     
     $Path = $Path.Trim()
     
-    # Already absolute
+    # Bereits absoluter Pfad
     if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
-    # Handle relative paths starting with ./
+    # Relative Pfade mit ./ oder .\ behandeln
     if ($Path -match '^[.][\\/]') {
         $parent = Split-Path -Path $PSScriptRoot -Parent
         $trimmed = $Path -replace '^[.][\\/]', ''
         return (Join-Path $parent $trimmed)
     }
-    # Otherwise relative to the script folder
+    # Andernfalls relativ zum Skriptordner
     return (Join-Path $PSScriptRoot $Path)
 }
 
 function Get-NextVersionedPath {
     param(
         [Parameter(Mandatory)][string]$BasePath,
-        # Suffix pattern: date + "_v" + version (e.g., _24-08-2025_v1)
+    # Suffix-Muster: Datum + "_v" + Version (z.B. _24-08-2025_v1)
         [string]$VersionFormat = '_{DATE}_v{0}'
     )
 
@@ -182,20 +184,20 @@ function Get-NextVersionedPath {
     $filename  = [System.IO.Path]::GetFileNameWithoutExtension($BasePath)
     $extension = [System.IO.Path]::GetExtension($BasePath)
 
-    # If the original path doesn't exist, return it unchanged
+    # Wenn der Originalpfad nicht existiert, unverändert zurückgeben
     if (-not (Test-Path -LiteralPath $BasePath)) {
         return $BasePath
     }
 
-    # Build requested date pattern, then sanitize for file-system safety
+    # Datumsanteil gemäss Muster erstellen und Dateinamen für das Dateisystem bereinigen
     $now = Get-Date
     $vf  = $VersionFormat
-    # Build requested date pattern, then sanitize for file-system safety
+    # Datumsanteil gemäss Muster erstellen und Dateinamen für das Dateisystem bereinigen
     $now = Get-Date
     $vf  = $VersionFormat
-    # New token - replace {DATE} with actual date (fix regex pattern)
+    # Neuer Platzhalter – {DATE} durch tatsächliches Datum ersetzen
     $vf  = $vf -replace '{DATE}', $now.ToString('dd-MM-yyyy')
-    # Backward compatibility with previous tokens - but only if they haven't been replaced yet
+    # Abwärtskompatibilität mit früheren Platzhaltern – nur wenn noch nicht ersetzt
     if ($vf -notmatch '\d{2}-\d{2}-\d{4}') {
         $vf  = $vf -replace 'DD',   $now.ToString('dd')
         $vf  = $vf -replace 'MM',   $now.ToString('MM')
@@ -205,7 +207,7 @@ function Get-NextVersionedPath {
     $version = 1
     do {
         $suffixRaw  = $vf -f $version
-        $suffixSafe = $suffixRaw -replace '[\\\/:*?"<>|]', '-'  # sanitize invalid filename chars
+    $suffixSafe = $suffixRaw -replace '[\\\/:*?"<>|]', '-'  # ungültige Dateizeichen bereinigen
         $versionedName = "$filename$suffixSafe$extension"
         $versionedPath = if ([string]::IsNullOrWhiteSpace($directory)) { $versionedName } else { Join-Path $directory $versionedName }
         $version++
@@ -215,15 +217,20 @@ function Get-NextVersionedPath {
     return $versionedPath
 }
 
-# Sicherstellen: GUI in STA – erforderlich für Dialoge
+# Sicherstellen: GUI in STA – erforderlich für Dialoge (auch bei Dot-Sourcing)
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     try {
-        if ($PSCommandPath -and $IsWindows) {
-            Write-Log "Starte neu im STA-Modus über Windows PowerShell: $PSCommandPath"
-            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-STA','-File',"$PSCommandPath") | Out-Null
-            return
-        } elseif (-not $IsWindows) {
-            Write-Log "Skipping STA mode restart on non-Windows platform" 'INFO'
+        if ($IsWindows) {
+            $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                Write-Log 'Konnte Skriptpfad nicht ermitteln, starte nicht neu (kein STA)' 'WARN'
+            } else {
+                Write-Log "Starte neu im STA-Modus über Windows PowerShell: $scriptPath"
+                Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-STA','-File',"$scriptPath") | Out-Null
+                return
+            }
+        } else {
+            Write-Log 'Skipping STA mode restart on non-Windows platform' 'INFO'
         }
     } catch {
         Write-Log "Konnte nicht im STA-Modus neustarten: $($_.Exception.Message)" 'WARN'
@@ -520,7 +527,7 @@ function Start-FileManagerGUI {
         try {
             $lblStatus.Text = 'ZIP wird erstellt...'
             
-            # Use versioning instead of overwriting
+            # Versionierung verwenden statt Überschreiben
             $finalZipPath = Get-NextVersionedPath -BasePath $zipPath
             
             Compress-Archive -LiteralPath $paths -DestinationPath $finalZipPath -Force
@@ -548,7 +555,7 @@ function Start-FileManagerGUI {
         }
         
         try {
-            # Use versioning for backup folder
+            # Versionsordner für Backups verwenden
             $finalDestPath = Get-NextVersionedPath -BasePath $dest
             $destFull = [System.IO.Path]::GetFullPath($finalDestPath)
             New-DirectoryIfMissing $destFull
@@ -661,7 +668,7 @@ function Start-FileManagerGUI {
             DefaultZipPath      = $tbZip.Text
             LogFile             = $Script:LogFile
             Window              = @{ Width = $form.Width; Height = $form.Height }
-            # Add fields for config.json compatibility
+            # Zusätzliche Felder für Kompatibilität mit config.json
             SourceFolder        = $tbFolder.Text
             TargetFolder        = $tbTarget.Text
             ZipBackup           = $false  # This could be enhanced to track ZIP preference
