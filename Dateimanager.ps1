@@ -1,26 +1,33 @@
-<#
-    Dateimanager.ps1
-    Ein moderner PowerShell-Dateimanager mit WPF-GUI (Dark-Theme).
-    Funktionen: Dateien suchen, auswählen, kopieren/verschieben, zippen/archivieren, Backup erstellen,
-    Konfiguration (Presets) laden/speichern, HTML-Loganzeige.
-#>
 
-[CmdletBinding()]
-param(
-    [string]$ConfigPath = "$(Split-Path -Parent $PSCommandPath)\config.json",
-    [string]$LogHtmlPath = "$(Split-Path -Parent $PSCommandPath)\log.html"
-)
+
+
+#Requires -Version 5.1
+<#
+    Dateimanager.ps1 (Fixed)
+    PowerShell-Dateimanager mit WPF-GUI (Dark-Theme).
+#>
 
 ###############################################################################
 # Helper: Ensure required assemblies
 ###############################################################################
 Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing | Out-Null
+try { Add-Type -AssemblyName System.Web | Out-Null } catch {}
+
+# Config paths
+$ConfigPath = "$(Split-Path -Parent $PSCommandPath)\config.json"
+$LogHtmlPath = "$(Split-Path -Parent $PSCommandPath)\log.html"
+
+###############################################################################
+# Helper: Ensure required assemblies
+###############################################################################
+Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing | Out-Null
+try { Add-Type -AssemblyName System.Web | Out-Null } catch {}
 
 ###############################################################################
 # Constants & Globals
 ###############################################################################
 $Script:AppName = "Dateimanager"
-$Script:Version = "1.0.0"
+$Script:Version = "1.0.1"
 $Script:SearchResults = New-Object System.Collections.ObjectModel.ObservableCollection[object]
 $Script:LogLock = New-Object Object
 
@@ -53,60 +60,20 @@ function Initialize-LogHtml {
     --shadow: 0 10px 30px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: radial-gradient(1200px 800px at 10% 10%, #0d0f14 0%, #0f1115 40%, #0a0c10 100%);
-    color: var(--text);
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial;
-    padding: 32px;
-  }
-  header {
-    display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px;
-  }
+  body { margin: 0; background: #0f1115; color: var(--text); font: 15px/1.5 system-ui; padding: 32px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; }
   h1 { font-size: 22px; margin: 0; letter-spacing:.3px; }
   .meta { color: var(--muted); font-size: 13px; }
-  .card {
-    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: var(--round);
-    box-shadow: var(--shadow);
-    padding: 18px;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    border-spacing: 0;
-    font-family: var(--mono);
-    font-size: 13px;
-  }
-  thead th {
-    text-align: left;
-    color: var(--muted);
-    font-weight: 600;
-    padding: 10px 8px;
-    border-bottom: 1px solid rgba(255,255,255,.08);
-    position: sticky;
-    top: 0;
-    background: rgba(21,24,35,.8);
-    backdrop-filter: blur(6px);
-  }
-  tbody td {
-    padding: 10px 8px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
-    vertical-align: top;
-  }
+  .card { background: #151823; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 18px; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
+  thead th { text-align: left; color: var(--muted); font-weight: 600; padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.08); position: sticky; top: 0; background: #151823; }
+  tbody td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; }
   tr:hover { background: rgba(255,255,255,.03); }
-  .tag {
-    display:inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 12px;
-    border: 1px solid rgba(255,255,255,.12);
-  }
-  .level-info { color: var(--accent-2); border-color: rgba(96,165,250,.3); }
-  .level-ok { color: var(--ok); border-color: rgba(52,211,153,.3); }
-  .level-warn { color: var(--warn); border-color: rgba(251,191,36,.3); }
-  .level-error { color: var(--danger); border-color: rgba(248,113,113,.3); }
+  .tag { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(255,255,255,.12); }
+  .level-info { color: #60a5fa; border-color: rgba(96,165,250,.3); }
+  .level-ok { color: #34d399; border-color: rgba(52,211,153,.3); }
+  .level-warn { color: #fbbf24; border-color: rgba(251,191,36,.3); }
+  .level-error { color: #f87171; border-color: rgba(248,113,113,.3); }
   .path{ color:#d1d5db }
   .time{ color:#9ca3af }
 </style>
@@ -130,9 +97,6 @@ function Initialize-LogHtml {
       </tbody>
     </table>
   </div>
-  <script>
-    // No dynamic backend. Entries are appended by PowerShell directly.
-  </script>
 </body>
 </html>
 "@
@@ -149,14 +113,15 @@ function Write-LogHtml {
     )
     Initialize-LogHtml
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    $levelClass = switch ($Level) {
-        "INFO"  { "level-info" }
-        "OK"    { "level-ok" }
-        "WARN"  { "level-warn" }
-        "ERROR" { "level-error" }
-    }
-    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$([System.Web.HttpUtility]::HtmlEncode($Details))</td><td><span class='tag $levelClass'>$Level</span></td></tr>"
-    # Insert before closing </tbody>
+    $levelClass = "level-info"
+    if ($Level -eq "OK")    { $levelClass = "level-ok" }
+    elseif ($Level -eq "WARN")  { $levelClass = "level-warn" }
+    elseif ($Level -eq "ERROR") { $levelClass = "level-error" }
+
+    $safe = $Details
+    try { $safe = [System.Web.HttpUtility]::HtmlEncode($Details) } catch {}
+
+    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $levelClass'>$Level</span></td></tr>"
     $content = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8
     $updated = $content -replace '</tbody>', "$row`n      </tbody>"
     $null = [System.Threading.Monitor]::Enter($Script:LogLock)
@@ -170,16 +135,15 @@ function Write-LogHtml {
 ###############################################################################
 # Config
 ###############################################################################
-function Load-Config {
+function Get-Config {
     if (Test-Path $ConfigPath) {
         try {
             $json = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
             return $json
         } catch {
-            Write-LogHtml -Level "ERROR" -Action "Config laden" -Details "Ungültige JSON-Datei: $ConfigPath - $($_.Exception.Message)"
+            Write-LogHtml -Level "ERROR" -Action "Config laden" -Details "Ungueltige JSON-Datei: $ConfigPath - $($_.Exception.Message)"
         }
     }
-    # Defaults
     return [pscustomobject]@{
         RootPath       = "$HOME"
         Pattern        = "*"
@@ -219,32 +183,31 @@ function Get-MatchingFiles {
         [string]$ModifiedBefore = "",
         [bool]$UseRegex = $false
     )
-    $files = @()
+
     if (-not (Test-Path $RootPath)) {
         Write-LogHtml -Level "ERROR" -Action "Suche" -Details "Pfad nicht gefunden: $RootPath"
         return @()
     }
 
-    $searchOpt = if ($Recurse) { "-Recurse" } else { "" }
     try {
-        $all = Get-ChildItem -LiteralPath $RootPath -File -ErrorAction Stop @{
-            Recurse = $Recurse
-            Filter = if ($UseRegex) { $null } else { $Pattern }
-        }
         if ($UseRegex) {
-            $all = $all | Where-Object { $_.Name -match $Pattern }
+            $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop | Where-Object { $_.Name -match $Pattern }
+        } else {
+            $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop -Filter $Pattern
         }
+
         if ($MinSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -ge ($MinSizeKB * 1KB) } }
         if ($MaxSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -le ($MaxSizeKB * 1KB) } }
-        if ($ModifiedAfter) { $after = Get-Date $ModifiedAfter; $all = $all | Where-Object { $_.LastWriteTime -ge $after } }
+        if ($ModifiedAfter)  { $after  = Get-Date $ModifiedAfter;  $all = $all | Where-Object { $_.LastWriteTime -ge $after } }
         if ($ModifiedBefore) { $before = Get-Date $ModifiedBefore; $all = $all | Where-Object { $_.LastWriteTime -le $before } }
 
         $files = $all | Select-Object FullName, Name, DirectoryName, Length, LastWriteTime
         Write-LogHtml -Level "OK" -Action "Suche" -Details "Gefunden: $($files.Count) – '$Pattern' in $RootPath"
+        return ,$files
     } catch {
         Write-LogHtml -Level "ERROR" -Action "Suche" -Details $_.Exception.Message
+        return @()
     }
-    return $files
 }
 
 function Copy-Or-MoveFiles {
@@ -257,7 +220,7 @@ function Copy-Or-MoveFiles {
     foreach ($it in $Items) {
         try {
             $target = Join-Path $Destination $it.Name
-            if ($Move) {
+            if ($Move.IsPresent) {
                 Move-Item -LiteralPath $it.FullName -Destination $target -Force
                 Write-LogHtml -Level "OK" -Action "Verschieben" -Details "$($it.FullName) -> $target"
             } else {
@@ -265,31 +228,34 @@ function Copy-Or-MoveFiles {
                 Write-LogHtml -Level "OK" -Action "Kopieren" -Details "$($it.FullName) -> $target"
             }
         } catch {
-            Write-LogHtml -Level "ERROR" -Action ($Move ? "Verschieben" : "Kopieren") -Details "$($it.FullName): $($_.Exception.Message)"
+            $act = "Kopieren"
+            if ($Move.IsPresent) { $act = "Verschieben" }
+            Write-LogHtml -Level "ERROR" -Action $act -Details "$($it.FullName): $($_.Exception.Message)"
         }
     }
 }
 
-function Create-Archive {
+function New-Archive {
     param(
         [array]$Items,
         [string]$ArchivePath
     )
     try {
-        $tmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())) -Force
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         foreach ($it in $Items) {
-            Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $tmpDir $it.Name) -Force
+            Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $tmp $it.Name) -Force
         }
         if (Test-Path $ArchivePath) { Remove-Item -LiteralPath $ArchivePath -Force }
-        Compress-Archive -Path (Join-Path $tmpDir "*") -DestinationPath $ArchivePath -Force
-        Remove-Item -LiteralPath $tmpDir -Recurse -Force
-        Write-LogHtml -Level "OK" -Action "Archiv erstellen" -Details $ArchivePath
+        Compress-Archive -Path (Join-Path $tmp "*") -DestinationPath $ArchivePath -Force
+        Remove-Item -LiteralPath $tmp -Recurse -Force
+    Write-LogHtml -Level "OK" -Action "Archiv erstellen" -Details $ArchivePath
     } catch {
-        Write-LogHtml -Level "ERROR" -Action "Archiv erstellen" -Details $_.Exception.Message
+    Write-LogHtml -Level "ERROR" -Action "Archiv erstellen" -Details $_.Exception.Message
     }
 }
 
-function Create-Backup {
+function New-Backup {
     param(
         [array]$Items,
         [string]$BackupRoot
@@ -301,17 +267,16 @@ function Create-Backup {
         foreach ($it in $Items) {
             Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $dest $it.Name) -Force
         }
-        Write-LogHtml -Level "OK" -Action "Backup" -Details $dest
+    Write-LogHtml -Level "OK" -Action "Backup" -Details $dest
         return $dest
     } catch {
-        Write-LogHtml -Level "ERROR" -Action "Backup" -Details $_.Exception.Message
+    Write-LogHtml -Level "ERROR" -Action "Backup" -Details $_.Exception.Message
     }
 }
 
 ###############################################################################
 # WPF UI
 ###############################################################################
-# XAML layout with dark aesthetics
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -337,11 +302,6 @@ $xaml = @"
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                     </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="Effect">
-                <Setter.Value>
-                    <DropShadowEffect BlurRadius="15" ShadowDepth="0" Opacity="0.25"/>
                 </Setter.Value>
             </Setter>
         </Style>
@@ -404,7 +364,6 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Top Controls -->
         <StackPanel Orientation="Horizontal" Grid.Row="0">
             <Button x:Name="BtnLoadCfg" Content="Preset laden"/>
             <Button x:Name="BtnSaveCfg" Content="Preset speichern"/>
@@ -417,14 +376,12 @@ $xaml = @"
             <Button x:Name="BtnBackup" Content="Backup"/>
         </StackPanel>
 
-        <!-- Middle -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="360"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Left pane: filters -->
             <StackPanel Grid.Column="0">
                 <GroupBox Header="Quelle &amp; Filter">
                     <StackPanel>
@@ -465,7 +422,6 @@ $xaml = @"
                 </GroupBox>
             </StackPanel>
 
-            <!-- Right pane: results -->
             <Grid Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
@@ -486,7 +442,6 @@ $xaml = @"
             </Grid>
         </Grid>
 
-        <!-- Footer -->
         <DockPanel Grid.Row="2">
             <TextBlock x:Name="StatusText" Text="Bereit." Margin="6" Foreground="#9ca3af"/>
         </DockPanel>
@@ -494,7 +449,6 @@ $xaml = @"
 </Window>
 "@
 
-# Parse XAML
 [xml]$xml = $xaml
 $reader = (New-Object System.Xml.XmlNodeReader $xml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
@@ -530,9 +484,10 @@ $StatusText   = $window.FindName('StatusText')
 $GridResults.ItemsSource = $Script:SearchResults
 
 ###############################################################################
+
 # Load initial config
 ###############################################################################
-$cfg = Load-Config
+$cfg = Get-Config
 $TbRoot.Text       = $cfg.RootPath
 $TbPattern.Text    = $cfg.Pattern
 $CbSub.IsChecked   = [bool]$cfg.IncludeSub
@@ -566,8 +521,7 @@ function Update-Status {
 ###############################################################################
 # Wire events
 ###############################################################################
-$BtnLoadCfg.Add_Click({
-    $cfg = Load-Config
+    $cfg = Get-Config
     $TbRoot.Text       = $cfg.RootPath
     $TbPattern.Text    = $cfg.Pattern
     $CbSub.IsChecked   = [bool]$cfg.IncludeSub
@@ -577,12 +531,17 @@ $BtnLoadCfg.Add_Click({
     $TbMinKB.Text      = [string]$cfg.MinSizeKB
     $TbMaxKB.Text      = [string]$cfg.MaxSizeKB
     $CbRegex.IsChecked = [bool]$cfg.UseRegex
-    $DpAfter.SelectedDate  = if ($cfg.ModifiedAfter)  { [datetime]$cfg.ModifiedAfter } else { $null }
-    $DpBefore.SelectedDate = if ($cfg.ModifiedBefore) { [datetime]$cfg.ModifiedBefore } else { $null }
+    if ($cfg.ModifiedAfter)  { $DpAfter.SelectedDate  = [datetime]$cfg.ModifiedAfter } else { $DpAfter.SelectedDate = $null }
+    if ($cfg.ModifiedBefore) { $DpBefore.SelectedDate = [datetime]$cfg.ModifiedBefore } else { $DpBefore.SelectedDate = $null }
     Update-Status "Preset geladen."
 })
 
 $BtnSaveCfg.Add_Click({
+    $modAfter = ""
+    if ($DpAfter.SelectedDate)  { $modAfter  = $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") }
+    $modBefore = ""
+    if ($DpBefore.SelectedDate) { $modBefore = $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") }
+
     $cfg = [pscustomobject]@{
         RootPath       = $TbRoot.Text
         Pattern        = $TbPattern.Text
@@ -592,8 +551,8 @@ $BtnSaveCfg.Add_Click({
         ArchivePath    = $TbArchive.Text
         MinSizeKB      = [int]($TbMinKB.Text  -as [int])
         MaxSizeKB      = [int]($TbMaxKB.Text  -as [int])
-        ModifiedAfter  = if ($DpAfter.SelectedDate)  { $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") } else { "" }
-        ModifiedBefore = if ($DpBefore.SelectedDate) { $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") } else { "" }
+        ModifiedAfter  = $modAfter
+        ModifiedBefore = $modBefore
         UseRegex       = [bool]$CbRegex.IsChecked
     }
     Save-Config -Cfg $cfg
@@ -608,13 +567,20 @@ $BtnOpenLogs.Add_Click({
 
 $BtnSearch.Add_Click({
     $Script:SearchResults.Clear()
+
+    $modAfter = ""
+    if ($DpAfter.SelectedDate)  { $modAfter  = $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") }
+    $modBefore = ""
+    if ($DpBefore.SelectedDate) { $modBefore = $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") }
+
+    $minKB = 0; if ($TbMinKB.Text) { $minKB = [int]($TbMinKB.Text -as [int]) }
+    $maxKB = 0; if ($TbMaxKB.Text) { $maxKB = [int]($TbMaxKB.Text -as [int]) }
+
     $files = Get-MatchingFiles -RootPath $TbRoot.Text -Pattern $TbPattern.Text -Recurse ([bool]$CbSub.IsChecked) `
-        -MinSizeKB ([int]($TbMinKB.Text -as [int])) -MaxSizeKB ([int]($TbMaxKB.Text -as [int])) `
-        -ModifiedAfter ($DpAfter.SelectedDate ? $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") : "") `
-        -ModifiedBefore ($DpBefore.SelectedDate ? $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") : "") `
-        -UseRegex ([bool]$CbRegex.IsChecked)
+        -MinSizeKB $minKB -MaxSizeKB $maxKB -ModifiedAfter $modAfter -ModifiedBefore $modBefore -UseRegex ([bool]$CbRegex.IsChecked)
+
     foreach ($f in $files) { [void]$Script:SearchResults.Add($f) }
-    Update-Status "Treffer: $($Script:SearchResults.Count)"
+    Update-Status ("Treffer: {0}" -f $Script:SearchResults.Count)
 })
 
 $BtnCopy.Add_Click({
@@ -631,18 +597,16 @@ $BtnMove.Add_Click({
     Update-Status "Verschieben abgeschlossen."
 })
 
-$BtnArchive.Add_Click({
     $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    Create-Archive -Items $sel -ArchivePath $TbArchive.Text
+    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewaehlt."; return }
+    New-Archive -Items $sel -ArchivePath $TbArchive.Text
     Update-Status "Archiv erstellt."
 })
 
-$BtnBackup.Add_Click({
     $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    $dest = Create-Backup -Items $sel -BackupRoot $TbBackupRoot.Text
-    if ($dest) { Update-Status "Backup erstellt: $dest" }
+    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewaehlt."; return }
+    $dest = New-Backup -Items $sel -BackupRoot $TbBackupRoot.Text
+    if ($dest) { Update-Status ("Backup erstellt: {0}" -f $dest) }
 })
 
 ###############################################################################
