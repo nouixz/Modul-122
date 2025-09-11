@@ -7,12 +7,15 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName Microsoft.VisualBasic
+
 $logPath    = Join-Path $PSScriptRoot 'DateiManager.log'
 $configPath = Join-Path $PSScriptRoot 'config.json'
+
 function Write-Log([string]$msg) {
     $time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     Add-Content -LiteralPath $logPath -Value "$time $msg"
 }
+
 function Get-Config {
     if (Test-Path $configPath) {
         try { return Get-Content -Raw $configPath | ConvertFrom-Json } catch {}
@@ -26,8 +29,11 @@ function Get-Config {
         Height       = 600
     }
 }
+
 function Set-Config($cfg) { $cfg | ConvertTo-Json | Set-Content -LiteralPath $configPath }
+
 $cfg = Get-Config
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Datei-Manager'
 $form.Width = $cfg.Width
@@ -37,19 +43,9 @@ $form.Font = New-Object System.Drawing.Font('Segoe UI',9)
 
 $lblFolder = New-Object System.Windows.Forms.Label
 $lblFolder.Text = 'Ordner:'
-
-    
-        
-          
-    
-
-        
-        Expand All
-    
-    @@ -49,24 +50,29 @@ $tbFolder = New-Object System.Windows.Forms.TextBox
-  
 $lblFolder.Location = '10,15'
 $lblFolder.AutoSize = $true
+
 $tbFolder = New-Object System.Windows.Forms.TextBox
 $tbFolder.Text = $cfg.SourceFolder
 $tbFolder.Location = '70,12'
@@ -80,17 +76,6 @@ $btnSearch.Anchor = 'Top,Right'
 
 $lvFiles = New-Object System.Windows.Forms.ListView
 $lvFiles.Location = '10,40'
-
-    
-        
-          
-    
-
-        
-        Expand All
-    
-    @@ -77,6 +83,7 @@ $lvFiles.CheckBoxes = $true
-  
 $lvFiles.Width = 860
 $lvFiles.Height = 400
 $lvFiles.View = 'Details'
@@ -102,19 +87,9 @@ $lvFiles.Anchor = 'Top,Bottom,Left,Right'
 
 $lblTarget = New-Object System.Windows.Forms.Label
 $lblTarget.Text = 'Ziel:'
-
-    
-        
-          
-    
-
-        
-        Expand All
-    
-    @@ -87,48 +94,64 @@ $tbTarget = New-Object System.Windows.Forms.TextBox
-  
 $lblTarget.Location = '10,450'
 $lblTarget.AutoSize = $true
+
 $tbTarget = New-Object System.Windows.Forms.TextBox
 $tbTarget.Text = $cfg.TargetFolder
 $tbTarget.Location = '70,447'
@@ -145,7 +120,6 @@ $btnRename.Anchor = 'Bottom,Right'
 $btnDelete = New-Object System.Windows.Forms.Button
 $btnDelete.Text = 'Löschen'
 $btnDelete.Location = '820,445'
-
 $btnDelete.Anchor = 'Bottom,Right'
 
 $btnSelectAll = New-Object System.Windows.Forms.Button
@@ -176,33 +150,19 @@ $lblStatus.Anchor = 'Bottom,Left'
 $form.Controls.AddRange(@(
     $lblFolder,$tbFolder,$btnBrowse,$lblExt,$tbExt,$btnSearch,$lvFiles,
     $lblTarget,$tbTarget,$btnTarget,$btnCopy,$btnMove,$btnRename,
-    $btnDelete,$btnSelectAll,$btnClear,$btnZip,$btnBackup,$lblStatus))
+    $btnDelete,$btnSelectAll,$btnClear,$btnZip,$btnBackup,$lblStatus
+))
 
 $btnBrowse.Add_Click({
     $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-
-    
-          
-            
-    
-
-          
-          Expand Down
-          
-            
-    
-
-          
-          Expand Up
-    
-    @@ -192,6 +215,14 @@ $btnRename.Add_Click({
-  
     if ($fbd.ShowDialog() -eq 'OK') { $tbFolder.Text = $fbd.SelectedPath }
 })
+
 $btnTarget.Add_Click({
     $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
     if ($fbd.ShowDialog() -eq 'OK') { $tbTarget.Text = $fbd.SelectedPath }
 })
+
 $btnSearch.Add_Click({
     $lvFiles.Items.Clear()
     $folder = $tbFolder.Text
@@ -217,35 +177,55 @@ $btnSearch.Add_Click({
     }
     $lblStatus.Text = "$($lvFiles.Items.Count) Dateien gefunden"
 })
+
 function Get-SelectedPaths {
     $lvFiles.Items | Where-Object { $_.Checked } | ForEach-Object { $_.Tag }
 }
+
 $btnSelectAll.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $true } })
 $btnClear.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $false } })
+
 $btnCopy.Add_Click({
     $dest = $tbTarget.Text
     if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungültig'; return }
     foreach ($p in Get-SelectedPaths) {
-        try { Copy-Item -LiteralPath $p -Destination $dest -Force; Write-Log "COPY $p -> $dest" } catch { Write-Log "ERROR copy $p : $($_.Exception.Message)" }
+        try {
+            Copy-Item -LiteralPath $p -Destination $dest -Force
+            Write-Log "COPY $p -> $dest"
+        } catch {
+            Write-Log "ERROR copy $p : $($_.Exception.Message)"
+        }
     }
     $lblStatus.Text = 'Kopieren fertig'
 })
+
 $btnMove.Add_Click({
     $dest = $tbTarget.Text
     if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungültig'; return }
     foreach ($p in Get-SelectedPaths) {
-        try { Move-Item -LiteralPath $p -Destination $dest -Force; Write-Log "MOVE $p -> $dest" } catch { Write-Log "ERROR move $p : $($_.Exception.Message)" }
+        try {
+            Move-Item -LiteralPath $p -Destination $dest -Force
+            Write-Log "MOVE $p -> $dest"
+        } catch {
+            Write-Log "ERROR move $p : $($_.Exception.Message)"
+        }
     }
     $btnSearch.PerformClick()
     $lblStatus.Text = 'Verschieben fertig'
 })
+
 $btnRename.Add_Click({
     foreach ($p in Get-SelectedPaths) {
         $name = [System.IO.Path]::GetFileName($p)
         $enteredName = [Microsoft.VisualBasic.Interaction]::InputBox('Neuer Name:', 'Umbenennen', $name)
         if ($enteredName -and $enteredName -ne $name) {
             $newPath = Join-Path ([System.IO.Path]::GetDirectoryName($p)) $enteredName
-            try { Rename-Item -LiteralPath $p -NewName $enteredName; Write-Log "RENAME $p -> $newPath" } catch { Write-Log "ERROR rename $p : $($_.Exception.Message)" }
+            try {
+                Rename-Item -LiteralPath $p -NewName $enteredName
+                Write-Log "RENAME $p -> $newPath"
+            } catch {
+                Write-Log "ERROR rename $p : $($_.Exception.Message)"
+            }
         }
     }
     $btnSearch.PerformClick()
@@ -253,7 +233,12 @@ $btnRename.Add_Click({
 
 $btnDelete.Add_Click({
     foreach ($p in Get-SelectedPaths) {
-        try { Remove-Item -LiteralPath $p -Force; Write-Log "DELETE $p" } catch { Write-Log "ERROR delete $p : $($_.Exception.Message)" }
+        try {
+            Remove-Item -LiteralPath $p -Force
+            Write-Log "DELETE $p"
+        } catch {
+            Write-Log "ERROR delete $p : $($_.Exception.Message)"
+        }
     }
     $btnSearch.PerformClick()
     $lblStatus.Text = 'Löschen fertig'
@@ -263,16 +248,6 @@ $btnZip.Add_Click({
     $paths = Get-SelectedPaths
     if (-not $paths) { return }
 
-    
-          
-            
-    
-
-          
-          Expand Down
-    
-    
-  
     $sfd = New-Object System.Windows.Forms.SaveFileDialog
     $sfd.Filter = 'ZIP files (*.zip)|*.zip'
     $sfd.FileName = [IO.Path]::GetFileName($cfg.ZipPath)
@@ -286,22 +261,31 @@ $btnZip.Add_Click({
         $entryStream = $entry.Open()
         $fileStream = [System.IO.File]::OpenRead($p)
         $fileStream.CopyTo($entryStream)
-        $fileStream.Dispose(); $entryStream.Dispose()
+        $fileStream.Dispose()
+        $entryStream.Dispose()
     }
-    $archive.Dispose(); $zipStream.Dispose()
+    $archive.Dispose()
+    $zipStream.Dispose()
     Write-Log "ZIP -> $zip"
 })
+
 $btnBackup.Add_Click({
     $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
     $fbd.SelectedPath = $cfg.BackupFolder
     if ($fbd.ShowDialog() -ne 'OK') { return }
     $dest = $fbd.SelectedPath
     foreach ($p in Get-SelectedPaths) {
-        try { Copy-Item -LiteralPath $p -Destination $dest -Force; Write-Log "BACKUP $p -> $dest" } catch { Write-Log "ERROR backup $p : $($_.Exception.Message)" }
+        try {
+            Copy-Item -LiteralPath $p -Destination $dest -Force
+            Write-Log "BACKUP $p -> $dest"
+        } catch {
+            Write-Log "ERROR backup $p : $($_.Exception.Message)"
+        }
     }
     $cfg.BackupFolder = $dest
     $lblStatus.Text = 'Backup fertig'
 })
+
 $form.Add_FormClosing({
     $cfg.SourceFolder = $tbFolder.Text
     $cfg.TargetFolder = $tbTarget.Text
@@ -310,4 +294,5 @@ $form.Add_FormClosing({
     $cfg.Height      = $form.Height
     Set-Config $cfg
 })
+
 [System.Windows.Forms.Application]::Run($form)
