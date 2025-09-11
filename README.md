@@ -1,21 +1,21 @@
-# Datei-Manager
+# File Manager
 
-Ein einfacher PowerShell-Datei-Manager mit grafischer Oberfläche. Das Skript kann Dateien nach Erweiterung suchen und die ausgewählten Elemente kopieren, verschieben, umbenennen, als ZIP archivieren oder in einen Backup-Ordner kopieren. Alle Aktionen werden in `DateiManager.log` protokolliert.
+A simple PowerShell file manager with a graphical interface. The script can search files by extension and copy, move, rename, zip, or back up the selected items. All actions are logged to `FileManager.log`.
 
-## Voraussetzungen
+## Requirements
 - PowerShell 7+
-- Windows mit .NET für die GUI
+- Windows with .NET for the GUI
 
-## Verwendung
+## Usage
 ```powershell
 pwsh -File ./Datei-Manager.ps1
 ```
-Beim Beenden speichert das Skript die zuletzt verwendeten Pfade in `config.json` im Skriptordner.
+When closing, the script saves the last used paths to `config.json` in the script folder.
 
-## Funktionen
-- Dateien nach Erweiterung durchsuchen
-- Ausgewählte Dateien kopieren oder verschieben
-- Ausgewählte Dateien umbenennen
-- Ausgewählte Dateien zu einem ZIP-Archiv zusammenfassen
-- Backup-Kopie der Auswahl anlegen
-- Protokollierung aller Aktionen
+## Features
+- Search files by extension
+- Copy or move selected files
+- Rename selected files
+- Create a ZIP archive of selected files
+- Create a backup of the selection
+- Log all actions

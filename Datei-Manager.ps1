@@ -123,7 +123,7 @@ $lblFolder.ForeColor = $Theme.Text
 
 $tbFolder = New-Object Windows.Forms.TextBox
 $tbFolder.Text = $cfg.SourceFolder
-$tbFolder.Dock = 'Top'
+$tbFolder.Dock = 'Fill'
 $tbFolder.Margin = '0,8,6,6'
 $tbFolder.BackColor = $Theme.Surface
 $tbFolder.ForeColor = $Theme.Text
@@ -191,7 +191,8 @@ $actions = New-Object Windows.Forms.TableLayoutPanel
 $actions.Dock = 'Top'
 $actions.BackColor = $Theme.Bg
 $actions.AutoSize = $true
-$actions.ColumnCount = 9
+# Ensure the layout reserves a column for each control
+$actions.ColumnCount = 10
 # Columns: TargetLbl | TargetBox | TargetBrowse | spacer | Copy | Move | Rename | Delete | Zip | Backup
 $actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))            | Out-Null
 $actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent',60)))          | Out-Null
@@ -207,7 +208,7 @@ $lblTarget.ForeColor = $Theme.Text
 
 $tbTarget = New-Object Windows.Forms.TextBox
 $tbTarget.Text = $cfg.TargetFolder
-$tbTarget.Dock = 'Top'
+$tbTarget.Dock = 'Fill'
 $tbTarget.Margin = '0,6,6,6'
 $tbTarget.BackColor = $Theme.Surface
 $tbTarget.ForeColor = $Theme.Text
