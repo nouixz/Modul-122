@@ -25,6 +25,8 @@ $Script:LogLock = New-Object Object
 ###############################################################################
 # Logging (HTML)
 ###############################################################################
+# Funktion zur Initialisierung der HTML-Logdatei.
+# Erstellt die Datei nur, wenn sie noch nicht existiert. Verwendet ein dunkles Layout.
 function Initialize-LogHtml {
     if (Test-Path $LogHtmlPath) { return }
     $app = $Script:AppName
@@ -79,6 +81,11 @@ function Initialize-LogHtml {
 }
 
 
+# Schreibt einen Eintrag (Zeile) in die HTML-Logdatei.
+# Parameter:
+#   Level  = INFO | OK | WARN | ERROR (Steuert Farbe/Icon)
+#   Action = Kurze Beschreibung der Aktion (z.B. "Suche", "Backup")
+#   Details= Pfad oder Zusatzinfos
 function Write-LogHtml {
     param(
         [ValidateSet("INFO","OK","WARN","ERROR")]
@@ -119,6 +126,8 @@ function Write-LogHtml {
 ###############################################################################
 # Config
 ###############################################################################
+# Lädt die Konfiguration (JSON). Bei Fehlern oder nicht vorhandener Datei
+# wird ein Standardobjekt zurückgegeben.
 function Get-Config {
     if (Test-Path $ConfigPath) {
         try {
@@ -143,6 +152,7 @@ function Get-Config {
     }
 }
 
+# Speichert die aktuelle Konfiguration als JSON.
 function Save-Config {
     param([psobject]$Cfg)
     try {
@@ -156,6 +166,8 @@ function Save-Config {
 ###############################################################################
 # File Ops
 ###############################################################################
+# Sucht nach Dateien basierend auf RootPath und Pattern.
+# Optional könnten (derzeit deaktivierte) Filter wie Größe/Datum ergänzt werden.
 function Get-MatchingFiles {
     param(
         [string]$RootPath,
@@ -189,6 +201,8 @@ function Get-MatchingFiles {
     }
 }
 
+# Kopiert oder verschiebt eine Liste von Dateien in ein Zielverzeichnis.
+# Bei Fehlern wird ein Log-Eintrag mit Level ERROR erzeugt.
 function Copy-Or-MoveFiles {
     param(
         [array]$Items,
@@ -214,6 +228,7 @@ function Copy-Or-MoveFiles {
     }
 }
 
+# Erstellt ein ZIP-Archiv aus den ausgewählten Dateien.
 function New-Archive {
     param(
         [array]$Items,
@@ -234,6 +249,7 @@ function New-Archive {
     }
 }
 
+# Erstellt einen Zeitstempel-Ordner und kopiert die ausgewählten Dateien hinein.
 function New-Backup {
     param(
         [array]$Items,
@@ -521,6 +537,8 @@ Write-LogHtml -Level "INFO" -Action "Start" -Details "Anwendung gestartet"
 ###############################################################################
 # UI helpers
 ###############################################################################
+# Ermittelt die aktuelle Auswahl im DataGrid.
+# Wenn keine Auswahl getroffen wurde, werden alle angezeigten Treffer verwendet.
 function Get-CurrentSelection {
     $sel = @()
     foreach ($item in $GridResults.SelectedItems) { $sel += $item }
@@ -528,6 +546,7 @@ function Get-CurrentSelection {
     return $sel
 }
 
+# Setzt die Statuszeile unten im Fenster.
 function Update-Status {
     param([string]$msg)
     $StatusText.Text = $msg
