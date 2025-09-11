@@ -314,7 +314,7 @@ function Select-Folder([string]$initial) {
     return (if ($fbd.ShowDialog() -eq 'OK') { $fbd.SelectedPath } else { $null })
 }
 
-function Refresh-FileList {
+function Get-FileList {
     $lvFiles.BeginUpdate()
     try {
         $lvFiles.Items.Clear()
@@ -356,9 +356,9 @@ $btnTarget.Add_Click({
     if ($sel) { $tbTarget.Text = $sel }
 })
 
-$btnSearch.Add_Click({ Refresh-FileList })
-$tbFolder.Add_TextChanged({ Refresh-FileList })
-$tbExt.Add_TextChanged({ Refresh-FileList })
+$btnSearch.Add_Click({ Get-FileList })
+$tbFolder.Add_TextChanged({ Get-FileList })
+$tbExt.Add_TextChanged({ Get-FileList })
 
 $btnSelectAll.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $true } })
 $btnSelectNone.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $false } })
@@ -382,7 +382,7 @@ $btnCopy.Add_Click({
         }
     }
     Show-Status 'Copy done'
-    Refresh-FileList
+    Get-FileList
 })
 
 $btnMove.Add_Click({
@@ -403,7 +403,7 @@ $btnMove.Add_Click({
         }
     }
     Show-Status 'Move done'
-    Refresh-FileList
+    Get-FileList
 })
 
 $btnRename.Add_Click({
@@ -422,7 +422,7 @@ $btnRename.Add_Click({
             Write-Log -Level 'ERROR' -Message ("Rename failed for {0}: {1}" -f $p,$_.Exception.Message)
         }
     }
-    Refresh-FileList
+    Get-FileList
 })
 
 $btnDelete.Add_Click({
@@ -443,7 +443,7 @@ $btnDelete.Add_Click({
         }
     }
     Show-Status 'Delete done'
-    Refresh-FileList
+    Get-FileList
 })
 
 $btnZip.Add_Click({
@@ -516,5 +516,5 @@ $form.Add_FormClosing({
 })
 
 #------------- Initial load -------------
-Refresh-FileList()
+Get-FileList
 [Windows.Forms.Application]::Run($form)
