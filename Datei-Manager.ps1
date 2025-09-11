@@ -1,418 +1,520 @@
-<#
-Einfacher Datei-Manager mit GUI
-Unterstützt: Suchen, Kopieren, Verschieben, Umbenennen, ZIP, Backup
-#>
-
+#Requires -Version 5.1
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName Microsoft.VisualBasic
 
-$logPath    = Join-Path $PSScriptRoot 'DateiManager.log'
-$configPath = Join-Path $PSScriptRoot 'config.json'
+#------------- Config and logging -------------
+$Script:AppName    = 'FileManager'
+$Script:Root       = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -LiteralPath $PSCommandPath -Parent }
+$Script:LogPath    = Join-Path $Script:Root "$($Script:AppName).log"
+$Script:ConfigPath = Join-Path $Script:Root 'config.json'
 
-function Write-Log([string]$msg) {
-    $time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    Add-Content -LiteralPath $logPath -Value "$time $msg"
+function Write-Log {
+    param([Parameter(Mandatory)][string]$Message,[ValidateSet('INFO','WARN','ERROR')][string]$Level='INFO')
+    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $line = '{0} [{1}] {2}' -f $ts,$Level,$Message
+    try {
+        $dir = Split-Path -Parent $Script:LogPath
+        if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        Add-Content -LiteralPath $Script:LogPath -Value $line -Encoding utf8
+    } catch { }
 }
 
 function Get-Config {
-    if (Test-Path $configPath) {
-        try { return Get-Content -Raw $configPath | ConvertFrom-Json } catch {}
+    if (Test-Path -LiteralPath $Script:ConfigPath) {
+        try { return Get-Content -Raw -LiteralPath $Script:ConfigPath | ConvertFrom-Json } catch { }
     }
     [pscustomobject]@{
         SourceFolder = (Get-Location).Path
         TargetFolder = (Get-Location).Path
         BackupFolder = (Get-Location).Path
-        ZipPath      = (Join-Path $PSScriptRoot 'Archiv.zip')
-        Width        = 900
-        Height       = 600
+        ZipPath      = (Join-Path $Script:Root 'Archive.zip')
+        Width        = 1000
+        Height       = 650
     }
 }
-function Set-Config($cfg) { $cfg | ConvertTo-Json | Set-Content -LiteralPath $configPath }
+function Save-Config {
+    param([Parameter(Mandatory)]$Cfg)
+    try { $Cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Script:ConfigPath -Encoding utf8 } catch {
+        Write-Log -Level 'WARN' -Message ("Failed to save config: {0}" -f $_.Exception.Message)
+    }
+}
+
+#------------- Guards -------------
+if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+    Write-Error 'This script must run in STA mode.'
+    return
+}
+
+# Optional ASCII guard: fail fast if source contains non-ASCII
+try {
+    $self = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop
+    if ($self -match '[^\x00-\x7F]') {
+        Write-Error 'Non-ASCII characters detected in the script. Please remove them.'
+        return
+    }
+} catch { }
 
 $cfg = Get-Config
 
+#------------- Theme -------------
+$Theme = @{
+    Bg        = [Drawing.Color]::FromArgb(30,30,30)        # #1E1E1E
+    Surface   = [Drawing.Color]::FromArgb(43,43,43)        # #2B2B2B
+    Text      = [Drawing.Color]::FromArgb(255,255,255)
+    TextMuted = [Drawing.Color]::FromArgb(199,199,199)
+    Accent    = [Drawing.Color]::FromArgb(0,120,212)       # #0078D4
+    Danger    = [Drawing.Color]::FromArgb(200,64,64)
+    Warn      = [Drawing.Color]::FromArgb(180,160,60)
+    Ok        = [Drawing.Color]::FromArgb(56,158,76)
+    Panel     = [Drawing.Color]::FromArgb(24,24,24)
+    Grid      = [Drawing.Color]::FromArgb(64,64,64)
+}
 
-# Modern look and feel
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'Datei-Manager'
-$form.Width = $cfg.Width
-$form.Height = $cfg.Height
+#------------- Form -------------
+[Windows.Forms.Application]::EnableVisualStyles()
+if ([Windows.Forms.Application]::SetHighDpiMode) {
+    [Windows.Forms.Application]::SetHighDpiMode([Windows.Forms.HighDpiMode]::SystemAware)
+}
+
+$form = New-Object Windows.Forms.Form
+$form.Text = 'File Manager'
 $form.StartPosition = 'CenterScreen'
-$form.BackColor = [System.Drawing.Color]::FromArgb(245, 247, 250)
-$form.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Regular)
-$form.MinimumSize = '800,500'
+$form.MinimumSize = '840,520'
+$form.Size = New-Object Drawing.Size($cfg.Width, $cfg.Height)
+$form.BackColor = $Theme.Bg
+$form.ForeColor = $Theme.Text
+$form.Font = New-Object Drawing.Font('Segoe UI', 10)
 
+# Root grid
+$root = New-Object Windows.Forms.TableLayoutPanel
+$root.Dock = 'Fill'
+$root.BackColor = $Theme.Bg
+$root.ColumnCount = 1
+$root.RowCount = 4
+$root.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))     | Out-Null  # top controls
+$root.RowStyles.Add((New-Object Windows.Forms.RowStyle('Percent',100)))  | Out-Null  # list
+$root.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))     | Out-Null  # actions
+$root.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))     | Out-Null  # status
+$form.Controls.Add($root)
 
-$lblFolder = New-Object System.Windows.Forms.Label
-$lblFolder.Text = 'Ordner:'
-$lblFolder.Location = '20,18'
+#------------- Top bar (folder + ext + search) -------------
+$top = New-Object Windows.Forms.TableLayoutPanel
+$top.Dock = 'Top'
+$top.BackColor = $Theme.Bg
+$top.ColumnCount = 6
+$top.AutoSize = $true
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))             | Out-Null
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent',60)))           | Out-Null
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))             | Out-Null
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))             | Out-Null
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))             | Out-Null
+$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))             | Out-Null
+
+$lblFolder = New-Object Windows.Forms.Label
+$lblFolder.Text = 'Folder'
 $lblFolder.AutoSize = $true
-$lblFolder.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+$lblFolder.Margin = '10,12,6,6'
+$lblFolder.ForeColor = $Theme.Text
 
-
-$tbFolder = New-Object System.Windows.Forms.TextBox
+$tbFolder = New-Object Windows.Forms.TextBox
 $tbFolder.Text = $cfg.SourceFolder
-$tbFolder.Location = '90,15'
-$tbFolder.Width = 500
-$tbFolder.Anchor = 'Top,Left,Right'
-$tbFolder.BackColor = [System.Drawing.Color]::White
+$tbFolder.Dock = 'Top'
+$tbFolder.Margin = '0,8,6,6'
+$tbFolder.BackColor = $Theme.Surface
+$tbFolder.ForeColor = $Theme.Text
+$tbFolder.BorderStyle = 'FixedSingle'
 
-
-
-$btnBrowse = New-Object System.Windows.Forms.Button
+$btnBrowse = New-Object Windows.Forms.Button
 $btnBrowse.Text = '...'
-$btnBrowse.Location = '600,13'
-$btnBrowse.Width = 35
-$btnBrowse.Anchor = 'Top,Right'
 $btnBrowse.FlatStyle = 'Flat'
-$btnBrowse.BackColor = [System.Drawing.Color]::FromArgb(220, 230, 241)
+$btnBrowse.Margin = '0,8,12,6'
+$btnBrowse.BackColor = $Theme.Surface
+$btnBrowse.ForeColor = $Theme.Text
+$btnBrowse.FlatAppearance.BorderColor = $Theme.Accent
 
-
-$lblExt = New-Object System.Windows.Forms.Label
-$lblExt.Text = 'Endung:'
-$lblExt.Location = '650,18'
+$lblExt = New-Object Windows.Forms.Label
+$lblExt.Text = 'Ext'
 $lblExt.AutoSize = $true
-$lblExt.Anchor = 'Top,Right'
-$lblExt.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+$lblExt.Margin = '0,12,6,6'
+$lblExt.ForeColor = $Theme.Text
 
+$tbExt = New-Object Windows.Forms.TextBox
+$tbExt.Width = 90
+$tbExt.Margin = '0,8,6,6'
+$tbExt.BackColor = $Theme.Surface
+$tbExt.ForeColor = $Theme.Text
+$tbExt.BorderStyle = 'FixedSingle'
+$tbExt.Text = ''
 
-$tbExt = New-Object System.Windows.Forms.TextBox
-$tbExt.Location = '720,15'
-$tbExt.Width = 70
-$tbExt.Anchor = 'Top,Right'
-$tbExt.BackColor = [System.Drawing.Color]::White
-
-
-$btnSearch = New-Object System.Windows.Forms.Button
-$btnSearch.Text = 'Suchen'
-$btnSearch.Location = '800,13'
-$btnSearch.Width = 80
-$btnSearch.Anchor = 'Top,Right'
+$btnSearch = New-Object Windows.Forms.Button
+$btnSearch.Text = 'Search'
 $btnSearch.FlatStyle = 'Flat'
-$btnSearch.BackColor = [System.Drawing.Color]::FromArgb(220, 241, 220)
+$btnSearch.Margin = '6,8,10,6'
+$btnSearch.BackColor = $Theme.Ok
+$btnSearch.ForeColor = $Theme.Text
+$btnSearch.FlatAppearance.BorderColor = $Theme.Accent
 
+$null = $top.Controls.Add($lblFolder,0,0)
+$null = $top.Controls.Add($tbFolder,1,0)
+$null = $top.Controls.Add($btnBrowse,2,0)
+$null = $top.Controls.Add($lblExt,3,0)
+$null = $top.Controls.Add($tbExt,4,0)
+$null = $top.Controls.Add($btnSearch,5,0)
+$root.Controls.Add($top,0,0)
 
-$lvFiles = New-Object System.Windows.Forms.ListView
-$lvFiles.Location = '10,50'
-$lvFiles.Width = 860
-$lvFiles.Height = 370
+#------------- File list -------------
+$lvFiles = New-Object Windows.Forms.ListView
 $lvFiles.View = 'Details'
 $lvFiles.CheckBoxes = $true
 $lvFiles.FullRowSelect = $true
 $lvFiles.GridLines = $true
-$lvFiles.Columns.Add('Datei',400) | Out-Null
-$lvFiles.Columns.Add('Ordner',440) | Out-Null
-$lvFiles.Anchor = 'Top,Bottom,Left,Right'
+$lvFiles.HideSelection = $false
+$lvFiles.Dock = 'Fill'
+$lvFiles.BackColor = $Theme.Surface
+$lvFiles.ForeColor = $Theme.Text
+$lvFiles.BorderStyle = 'FixedSingle'
+$lvFiles.Columns.Add('Name', 360)    | Out-Null
+$lvFiles.Columns.Add('Folder', 600)  | Out-Null
 
+# Reduce flicker
+$lvFiles.GetType().GetProperty('DoubleBuffered',[Reflection.BindingFlags]'NonPublic,Instance').SetValue($lvFiles,$true,$null)
 
-$lblTarget = New-Object System.Windows.Forms.Label
-$lblTarget.Text = 'Ziel:'
-$lblTarget.Location = '10,430'
+$root.Controls.Add($lvFiles,0,1)
+
+#------------- Actions bar (target + buttons) -------------
+$actions = New-Object Windows.Forms.TableLayoutPanel
+$actions.Dock = 'Top'
+$actions.BackColor = $Theme.Bg
+$actions.AutoSize = $true
+$actions.ColumnCount = 9
+# Columns: TargetLbl | TargetBox | TargetBrowse | spacer | Copy | Move | Rename | Delete | Zip | Backup
+$actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))            | Out-Null
+$actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent',60)))          | Out-Null
+$actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize')))            | Out-Null
+$actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent',5)))           | Out-Null
+for ($i=0;$i -lt 6;$i++){ $actions.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('AutoSize'))) | Out-Null }
+
+$lblTarget = New-Object Windows.Forms.Label
+$lblTarget.Text = 'Target'
 $lblTarget.AutoSize = $true
-$lblTarget.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+$lblTarget.Margin = '10,8,6,8'
+$lblTarget.ForeColor = $Theme.Text
 
-
-$tbTarget = New-Object System.Windows.Forms.TextBox
+$tbTarget = New-Object Windows.Forms.TextBox
 $tbTarget.Text = $cfg.TargetFolder
-$tbTarget.Location = '70,427'
-$tbTarget.Width = 400
-$tbTarget.Anchor = 'Bottom,Left,Right'
-$tbTarget.BackColor = [System.Drawing.Color]::White
+$tbTarget.Dock = 'Top'
+$tbTarget.Margin = '0,6,6,6'
+$tbTarget.BackColor = $Theme.Surface
+$tbTarget.ForeColor = $Theme.Text
+$tbTarget.BorderStyle = 'FixedSingle'
 
-
-$btnTarget = New-Object System.Windows.Forms.Button
+$btnTarget = New-Object Windows.Forms.Button
 $btnTarget.Text = '...'
-$btnTarget.Location = '480,425'
-$btnTarget.Width = 35
-$btnTarget.Anchor = 'Bottom,Right'
 $btnTarget.FlatStyle = 'Flat'
-$btnTarget.BackColor = [System.Drawing.Color]::FromArgb(220, 230, 241)
+$btnTarget.Margin = '0,6,6,6'
+$btnTarget.BackColor = $Theme.Surface
+$btnTarget.ForeColor = $Theme.Text
+$btnTarget.FlatAppearance.BorderColor = $Theme.Accent
 
+function New-ActionButton([string]$text,[Drawing.Color]$bg,[Drawing.Color]$fg) {
+    $b = New-Object Windows.Forms.Button
+    $b.Text = $text
+    $b.FlatStyle = 'Flat'
+    $b.Margin = '6,6,6,6'
+    $b.BackColor = $bg
+    $b.ForeColor = $fg
+    $b.FlatAppearance.BorderColor = $Theme.Accent
+    return $b
+}
 
-$btnCopy = New-Object System.Windows.Forms.Button
-$btnCopy.Text = 'Kopieren'
-$btnCopy.Location = '520,425'
-$btnCopy.Width = 90
-$btnCopy.Anchor = 'Bottom,Right'
-$btnCopy.FlatStyle = 'Flat'
-$btnCopy.BackColor = [System.Drawing.Color]::FromArgb(220, 241, 220)
+$btnCopy   = New-ActionButton 'Copy'     $Theme.Surface $Theme.Text
+$btnMove   = New-ActionButton 'Move'     $Theme.Surface $Theme.Text
+$btnRename = New-ActionButton 'Rename'   $Theme.Surface $Theme.Text
+$btnDelete = New-ActionButton 'Delete'   $Theme.Danger  $Theme.Text
+$btnZip    = New-ActionButton 'Zip'      $Theme.Warn    $Theme.Text
+$btnBackup = New-ActionButton 'Backup'   $Theme.Surface $Theme.Text
 
+$null = $actions.Controls.Add($lblTarget,0,0)
+$null = $actions.Controls.Add($tbTarget,1,0)
+$null = $actions.Controls.Add($btnTarget,2,0)
+# spacer at col 3
+$null = $actions.Controls.Add((New-Object Windows.Forms.Label),3,0)
+$null = $actions.Controls.Add($btnCopy,4,0)
+$null = $actions.Controls.Add($btnMove,5,0)
+$null = $actions.Controls.Add($btnRename,6,0)
+$null = $actions.Controls.Add($btnDelete,7,0)
+$null = $actions.Controls.Add($btnZip,8,0)
+$null = $actions.Controls.Add($btnBackup,9,0) | Out-Null
 
-$btnMove = New-Object System.Windows.Forms.Button
-$btnMove.Text = 'Verschieben'
-$btnMove.Location = '620,425'
-$btnMove.Width = 110
-$btnMove.Anchor = 'Bottom,Right'
-$btnMove.FlatStyle = 'Flat'
-$btnMove.BackColor = [System.Drawing.Color]::FromArgb(241, 241, 220)
+# Secondary actions (select all/none)
+$secondary = New-Object Windows.Forms.FlowLayoutPanel
+$secondary.FlowDirection = 'LeftToRight'
+$secondary.WrapContents = $false
+$secondary.Dock = 'Top'
+$secondary.BackColor = $Theme.Bg
+$secondary.AutoSize = $true
+$btnSelectAll = New-ActionButton 'Select All'  $Theme.Surface $Theme.Text
+$btnSelectNone= New-ActionButton 'Select None' $Theme.Surface $Theme.Text
+$secondary.Controls.AddRange(@($btnSelectAll,$btnSelectNone))
 
+$actionsPanel = New-Object Windows.Forms.Panel
+$actionsPanel.Dock = 'Top'
+$actionsPanel.BackColor = $Theme.Bg
+$actionsPanel.AutoSize = $true
+$actionsPanel.Controls.Add($actions)
+$actionsPanel.Controls.Add($secondary)
 
-$btnRename = New-Object System.Windows.Forms.Button
-$btnRename.Text = 'Umbenennen'
-$btnRename.Location = '740,425'
-$btnRename.Width = 110
-$btnRename.Anchor = 'Bottom,Right'
-$btnRename.FlatStyle = 'Flat'
-$btnRename.BackColor = [System.Drawing.Color]::FromArgb(220, 241, 241)
+$root.Controls.Add($actionsPanel,0,2)
 
-
-$btnDelete = New-Object System.Windows.Forms.Button
-$btnDelete.Text = 'Loeschen'
-$btnSelectAll.Text = 'Alle'
-$btnClear.Text = 'Keine'
-$lblFolder.Text = 'Ordner:'
-$lblExt.Text = 'Endung:'
-$lblTarget.Text = 'Ziel:'
-$lvFiles.Columns.Add('Datei',400) | Out-Null
-$lvFiles.Columns.Add('Ordner',440) | Out-Null
-$lblStatus.Text = "$($lvFiles.Items.Count) Dateien gefunden"
-    if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungueltig'; return }
-    $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewaehlt'; return }
-$lblStatus.Text = 'Kopieren fertig'
-    if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungueltig'; return }
-    $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewaehlt'; return }
-$lblStatus.Text = 'Verschieben fertig'
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewaehlt'; return }
-$lblStatus.Text = 'Loeschen fertig'
-    if (-not $paths) { $lblStatus.Text = 'Keine Datei ausgewaehlt'; return }
-$lblStatus.Text = 'ZIP fertig'
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewaehlt'; return }
-$lblStatus.Text = 'Backup fertig'
-    if (-not (Test-Path $folder)) { $lblStatus.Text = 'Ordner nicht gefunden'; return }
-$btnDelete.Location = '860,425'
-$btnDelete.Width = 90
-$btnDelete.Anchor = 'Bottom,Right'
-$btnDelete.FlatStyle = 'Flat'
-$btnDelete.BackColor = [System.Drawing.Color]::FromArgb(241, 220, 220)
-
-
-$btnSelectAll = New-Object System.Windows.Forms.Button
-$btnSelectAll.Text = 'Alle'
-$btnSelectAll.Location = '10,470'
-$btnSelectAll.Anchor = 'Bottom,Left'
-$btnSelectAll.FlatStyle = 'Flat'
-
-
-$btnClear = New-Object System.Windows.Forms.Button
-$btnClear.Text = 'Keine'
-$btnClear.Location = '80,470'
-$btnClear.Anchor = 'Bottom,Left'
-$btnClear.FlatStyle = 'Flat'
-
-
-$btnZip = New-Object System.Windows.Forms.Button
-$btnZip.Text = 'ZIP'
-$btnZip.Location = '150,470'
-$btnZip.Anchor = 'Bottom,Left'
-$btnZip.FlatStyle = 'Flat'
-
-
-$btnBackup = New-Object System.Windows.Forms.Button
-$btnBackup.Text = 'Backup'
-$btnBackup.Location = '220,470'
-$btnBackup.Anchor = 'Bottom,Left'
-$btnBackup.FlatStyle = 'Flat'
-
-
-# Status bar and progress bar
-$statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Height = 30
+#------------- Status bar -------------
+$statusPanel = New-Object Windows.Forms.Panel
+$statusPanel.Height = 32
 $statusPanel.Dock = 'Bottom'
-$statusPanel.BackColor = [System.Drawing.Color]::FromArgb(230, 230, 230)
+$statusPanel.BackColor = $Theme.Panel
+$statusPanel.Padding = '8,4,8,4'
 
-$lblStatus = New-Object System.Windows.Forms.Label
+$lblStatus = New-Object Windows.Forms.Label
 $lblStatus.AutoSize = $true
-$lblStatus.Location = '10,7'
-$lblStatus.Anchor = 'Left'
-$lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Italic)
+$lblStatus.ForeColor = $Theme.TextMuted
+$lblStatus.Text = 'Ready'
 
-$progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Width = 200
+$progressBar = New-Object Windows.Forms.ProgressBar
+$progressBar.Width = 240
 $progressBar.Height = 18
-$progressBar.Location = '700,6'
-$progressBar.Anchor = 'Right'
 $progressBar.Style = 'Continuous'
+$progressBar.Anchor = 'Right'
 $progressBar.Visible = $false
+$progressBar.Location = New-Object Drawing.Point(($form.ClientSize.Width - $progressBar.Width - 16),6)
+$statusPanel.Add_Resize({
+    $progressBar.Location = New-Object Drawing.Point(($statusPanel.Width - $progressBar.Width - 12),6)
+})
 
 $statusPanel.Controls.Add($lblStatus)
 $statusPanel.Controls.Add($progressBar)
+$root.Controls.Add($statusPanel,0,3)
 
-
-$form.Controls.AddRange(@(
-    $lblFolder,$tbFolder,$btnBrowse,$lblExt,$tbExt,$btnSearch,$lvFiles,
-    $lblTarget,$tbTarget,$btnTarget,$btnCopy,$btnMove,$btnRename,
-    $btnDelete,$btnSelectAll,$btnClear,$btnZip,$btnBackup,$statusPanel))
-
-$btnBrowse.Add_Click({
-    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-    if ($fbd.ShowDialog() -eq 'OK') { $tbFolder.Text = $fbd.SelectedPath }
-})
-$btnTarget.Add_Click({
-    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-    if ($fbd.ShowDialog() -eq 'OK') { $tbTarget.Text = $fbd.SelectedPath }
-})
-
-
-
-# Dynamic file list refresh function (use approved verb: Get-FileList)
-function Get-FileList {
-    $lvFiles.Items.Clear()
-    $folder = $tbFolder.Text
-    if (-not (Test-Path $folder)) { $lblStatus.Text = 'Ordner nicht gefunden'; return }
-    $ext = $tbExt.Text.Trim().TrimStart('.')
-    $pattern = if ($ext) { "*.$ext" } else { '*' }
-    Get-ChildItem -LiteralPath $folder -Filter $pattern -File | ForEach-Object {
-        $item = New-Object System.Windows.Forms.ListViewItem($_.Name)
-        $item.SubItems.Add($_.DirectoryName) | Out-Null
-        $item.Tag = $_.FullName
-        $lvFiles.Items.Add($item) | Out-Null
-    }
-    $lblStatus.Text = "$($lvFiles.Items.Count) Dateien gefunden"
+#------------- Helpers -------------
+function Show-Status([string]$text) {
+    $lblStatus.Text = $text
+    Write-Log -Message $text
 }
-
-$btnSearch.Add_Click({ Get-FileList })
-$tbFolder.Add_TextChanged({ Get-FileList })
-$tbExt.Add_TextChanged({ Get-FileList })
 
 function Get-SelectedPaths {
     $lvFiles.Items | Where-Object { $_.Checked } | ForEach-Object { $_.Tag }
 }
 
-$btnSelectAll.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $true } })
-$btnClear.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $false } })
+function Select-Folder([string]$initial) {
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    if ($initial -and (Test-Path -LiteralPath $initial)) { $fbd.SelectedPath = $initial }
+    return (if ($fbd.ShowDialog() -eq 'OK') { $fbd.SelectedPath } else { $null })
+}
 
-
-$btnCopy.Add_Click({
-    $dest = $tbTarget.Text
-    if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungültig'; return }
-    $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
-    $progressBar.Visible = $true
-    $progressBar.Maximum = $sel.Count
-    $progressBar.Value = 0
-    foreach ($p in $sel) {
-        try { Copy-Item -LiteralPath $p -Destination $dest -Force; Write-Log "COPY $p -> $dest" } catch { Write-Log "ERROR copy $p : $($_.Exception.Message)" }
-        $progressBar.Value++
+function Refresh-FileList {
+    $lvFiles.BeginUpdate()
+    try {
+        $lvFiles.Items.Clear()
+        $folder = $tbFolder.Text
+        if (-not (Test-Path -LiteralPath $folder)) { Show-Status 'Folder not found'; return }
+        $ext = $tbExt.Text.Trim().TrimStart('.')
+        $pattern = if ($ext) { "*.$ext" } else { '*' }
+        Get-ChildItem -LiteralPath $folder -Filter $pattern -File -ErrorAction Stop | ForEach-Object {
+            $item = New-Object Windows.Forms.ListViewItem($_.Name)
+            [void]$item.SubItems.Add($_.DirectoryName)
+            $item.Tag = $_.FullName
+            $lvFiles.Items.Add($item) | Out-Null
+        }
+        Show-Status ("{0} files found" -f $lvFiles.Items.Count)
+    } catch {
+        Show-Status ("Error reading folder: {0}" -f $_.Exception.Message)
+        Write-Log -Level 'ERROR' -Message $_.Exception.ToString()
+    } finally {
+        $lvFiles.EndUpdate()
     }
-    $progressBar.Visible = $false
-    $lblStatus.Text = 'Kopieren fertig'
-    Get-FileList
+}
+
+function With-Progress([int]$count,[scriptblock]$body){
+    if ($count -le 0) { & $body; return }
+    $progressBar.Visible = $true
+    $progressBar.Minimum = 0
+    $progressBar.Maximum = $count
+    $progressBar.Value = 0
+    try { & $body } finally { $progressBar.Visible = $false }
+}
+
+#------------- Wire events -------------
+$btnBrowse.Add_Click({
+    $sel = Select-Folder -initial $tbFolder.Text
+    if ($sel) { $tbFolder.Text = $sel }
+})
+$btnTarget.Add_Click({
+    $sel = Select-Folder -initial $tbTarget.Text
+    if ($sel) { $tbTarget.Text = $sel }
 })
 
+$btnSearch.Add_Click({ Refresh-FileList })
+$tbFolder.Add_TextChanged({ Refresh-FileList })
+$tbExt.Add_TextChanged({ Refresh-FileList })
+
+$btnSelectAll.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $true } })
+$btnSelectNone.Add_Click({ $lvFiles.Items | ForEach-Object { $_.Checked = $false } })
+
+# Actions
+$btnCopy.Add_Click({
+    $dest = $tbTarget.Text
+    if (-not (Test-Path -LiteralPath $dest)) { Show-Status 'Target not valid'; return }
+    $sel = @(Get-SelectedPaths)
+    if (-not $sel) { Show-Status 'No file selected'; return }
+
+    With-Progress $sel.Count {
+        foreach ($p in $sel) {
+            try {
+                Copy-Item -LiteralPath $p -Destination $dest -Force -ErrorAction Stop
+                Write-Log -Message ("COPY {0} -> {1}" -f $p,$dest)
+            } catch {
+                Write-Log -Level 'ERROR' -Message ("Copy failed for {0}: {1}" -f $p,$_.Exception.Message)
+            }
+            $progressBar.Value++
+        }
+    }
+    Show-Status 'Copy done'
+    Refresh-FileList
+})
 
 $btnMove.Add_Click({
     $dest = $tbTarget.Text
-    if (-not (Test-Path $dest)) { $lblStatus.Text = 'Ziel ungültig'; return }
+    if (-not (Test-Path -LiteralPath $dest)) { Show-Status 'Target not valid'; return }
     $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
-    $progressBar.Visible = $true
-    $progressBar.Maximum = $sel.Count
-    $progressBar.Value = 0
-    foreach ($p in $sel) {
-        try { Move-Item -LiteralPath $p -Destination $dest -Force; Write-Log "MOVE $p -> $dest" } catch { Write-Log "ERROR move $p : $($_.Exception.Message)" }
-        $progressBar.Value++
-    }
-    $progressBar.Visible = $false
-    $lblStatus.Text = 'Verschieben fertig'
-    Get-FileList
-})
+    if (-not $sel) { Show-Status 'No file selected'; return }
 
+    With-Progress $sel.Count {
+        foreach ($p in $sel) {
+            try {
+                Move-Item -LiteralPath $p -Destination $dest -Force -ErrorAction Stop
+                Write-Log -Message ("MOVE {0} -> {1}" -f $p,$dest)
+            } catch {
+                Write-Log -Level 'ERROR' -Message ("Move failed for {0}: {1}" -f $p,$_.Exception.Message)
+            }
+            $progressBar.Value++
+        }
+    }
+    Show-Status 'Move done'
+    Refresh-FileList
+})
 
 $btnRename.Add_Click({
     $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
+    if (-not $sel) { Show-Status 'No file selected'; return }
+
     foreach ($p in $sel) {
-        $name = [System.IO.Path]::GetFileName($p)
-        $enteredName = [Microsoft.VisualBasic.Interaction]::InputBox('Neuer Name:', 'Umbenennen', $name)
-        if ($enteredName -and $enteredName -ne $name) {
-            $newPath = Join-Path ([System.IO.Path]::GetDirectoryName($p)) $enteredName
-            try { Rename-Item -LiteralPath $p -NewName $enteredName; Write-Log "RENAME $p -> $newPath" } catch { Write-Log "ERROR rename $p : $($_.Exception.Message)" }
+        $old = [IO.Path]::GetFileName($p)
+        $new = [Microsoft.VisualBasic.Interaction]::InputBox('New name:','Rename',$old)
+        if ([string]::IsNullOrWhiteSpace($new) -or $new -eq $old) { continue }
+        $dir = [IO.Path]::GetDirectoryName($p)
+        try {
+            Rename-Item -LiteralPath $p -NewName $new -ErrorAction Stop
+            Write-Log -Message ("RENAME {0} -> {1}" -f $p,(Join-Path $dir $new))
+        } catch {
+            Write-Log -Level 'ERROR' -Message ("Rename failed for {0}: {1}" -f $p,$_.Exception.Message)
         }
     }
-    Get-FileList
+    Refresh-FileList
 })
-
 
 $btnDelete.Add_Click({
     $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
-    $progressBar.Visible = $true
-    $progressBar.Maximum = $sel.Count
-    $progressBar.Value = 0
-    foreach ($p in $sel) {
-        try { Remove-Item -LiteralPath $p -Force; Write-Log "DELETE $p" } catch { Write-Log "ERROR delete $p : $($_.Exception.Message)" }
-        $progressBar.Value++
-    }
-    $progressBar.Visible = $false
-    $lblStatus.Text = 'Löschen fertig'
-    Get-FileList
-})
+    if (-not $sel) { Show-Status 'No file selected'; return }
+    $confirm = [System.Windows.Forms.MessageBox]::Show('Delete selected files?','Confirm Delete','YesNo','Warning')
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
 
+    With-Progress $sel.Count {
+        foreach ($p in $sel) {
+            try {
+                Remove-Item -LiteralPath $p -Force -ErrorAction Stop
+                Write-Log -Message ("DELETE {0}" -f $p)
+            } catch {
+                Write-Log -Level 'ERROR' -Message ("Delete failed for {0}: {1}" -f $p,$_.Exception.Message)
+            }
+            $progressBar.Value++
+        }
+    }
+    Show-Status 'Delete done'
+    Refresh-FileList
+})
 
 $btnZip.Add_Click({
     $paths = @(Get-SelectedPaths)
-    if (-not $paths) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
+    if (-not $paths) { Show-Status 'No file selected'; return }
+
     $sfd = New-Object System.Windows.Forms.SaveFileDialog
     $sfd.Filter = 'ZIP files (*.zip)|*.zip'
     $sfd.FileName = [IO.Path]::GetFileName($cfg.ZipPath)
     if ($sfd.ShowDialog() -ne 'OK') { return }
     $zip = $sfd.FileName
-    if (Test-Path $zip) { Remove-Item -LiteralPath $zip }
-    $zipStream = [System.IO.File]::Open($zip,[System.IO.FileMode]::CreateNew)
-    $archive = New-Object System.IO.Compression.ZipArchive($zipStream,[System.IO.Compression.ZipArchiveMode]::Create)
-    $progressBar.Visible = $true
-    $progressBar.Maximum = $paths.Count
-    $progressBar.Value = 0
-    foreach ($p in $paths) {
-        $entry = $archive.CreateEntry([IO.Path]::GetFileName($p))
-        $entryStream = $entry.Open()
-        $fileStream = [System.IO.File]::OpenRead($p)
-        $fileStream.CopyTo($entryStream)
-        $fileStream.Dispose(); $entryStream.Dispose()
-        $progressBar.Value++
-    }
-    $archive.Dispose(); $zipStream.Dispose()
-    $progressBar.Visible = $false
-    Write-Log "ZIP -> $zip"
-    $lblStatus.Text = 'ZIP fertig'
-})
 
+    if (Test-Path -LiteralPath $zip) {
+        try { Remove-Item -LiteralPath $zip -Force -ErrorAction Stop } catch {
+            Show-Status ("Cannot overwrite: {0}" -f $_.Exception.Message); return
+        }
+    }
+
+    With-Progress $paths.Count {
+        $zipStream = [System.IO.File]::Open($zip,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None)
+        try {
+            $archive = New-Object System.IO.Compression.ZipArchive($zipStream,[System.IO.Compression.ZipArchiveMode]::Create,$false)
+            try {
+                foreach ($p in $paths) {
+                    $entry = $archive.CreateEntry([IO.Path]::GetFileName($p))
+                    $es = $entry.Open()
+                    try {
+                        $fs = [System.IO.File]::OpenRead($p)
+                        try { $fs.CopyTo($es) } finally { $fs.Dispose() }
+                    } finally { $es.Dispose() }
+                    $progressBar.Value++
+                }
+            } finally { $archive.Dispose() }
+        } finally { $zipStream.Dispose() }
+    }
+    Write-Log -Message ("ZIP -> {0}" -f $zip)
+    Show-Status 'Zip done'
+})
 
 $btnBackup.Add_Click({
-    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-    $fbd.SelectedPath = $cfg.BackupFolder
-    if ($fbd.ShowDialog() -ne 'OK') { return }
-    $dest = $fbd.SelectedPath
     $sel = @(Get-SelectedPaths)
-    if (-not $sel) { $lblStatus.Text = 'Keine Datei ausgewählt'; return }
-    $progressBar.Visible = $true
-    $progressBar.Maximum = $sel.Count
-    $progressBar.Value = 0
-    foreach ($p in $sel) {
-        try { Copy-Item -LiteralPath $p -Destination $dest -Force; Write-Log "BACKUP $p -> $dest" } catch { Write-Log "ERROR backup $p : $($_.Exception.Message)" }
-        $progressBar.Value++
+    if (-not $sel) { Show-Status 'No file selected'; return }
+    $target = Select-Folder -initial $cfg.BackupFolder
+    if (-not $target) { return }
+
+    With-Progress $sel.Count {
+        foreach ($p in $sel) {
+            try {
+                Copy-Item -LiteralPath $p -Destination $target -Force -ErrorAction Stop
+                Write-Log -Message ("BACKUP {0} -> {1}" -f $p,$target)
+            } catch {
+                Write-Log -Level 'ERROR' -Message ("Backup failed for {0}: {1}" -f $p,$_.Exception.Message)
+            }
+            $progressBar.Value++
+        }
     }
-    $progressBar.Visible = $false
-    $cfg.BackupFolder = $dest
-    $lblStatus.Text = 'Backup fertig'
+    $cfg.BackupFolder = $target
+    Show-Status 'Backup done'
 })
 
+#------------- Persist on close -------------
 $form.Add_FormClosing({
-    $cfg.SourceFolder = $tbFolder.Text
-    $cfg.TargetFolder = $tbTarget.Text
-    $cfg.ZipPath     = $cfg.ZipPath
-    $cfg.Width       = $form.Width
-    $cfg.Height      = $form.Height
-    Set-Config $cfg
+    try {
+        $cfg.SourceFolder = $tbFolder.Text
+        $cfg.TargetFolder = $tbTarget.Text
+        $cfg.Width        = $form.Width
+        $cfg.Height       = $form.Height
+        Save-Config -Cfg $cfg
+    } catch { }
 })
 
-
-# Initial file list load
-Get-FileList
-
-[System.Windows.Forms.Application]::Run($form)
+#------------- Initial load -------------
+Refresh-FileList()
+[Windows.Forms.Application]::Run($form)
