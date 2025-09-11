@@ -17,7 +17,7 @@ function Write-Log([string]$msg) {
     Add-Content -LiteralPath $logPath -Value "$time $msg"
 }
 
-function Load-Config {
+function Get-Config {
     if (Test-Path $configPath) {
         try { return Get-Content -Raw $configPath | ConvertFrom-Json } catch {}
     }
@@ -30,9 +30,9 @@ function Load-Config {
         Height       = 600
     }
 }
-function Save-Config($cfg) { $cfg | ConvertTo-Json | Set-Content -LiteralPath $configPath }
+function Set-Config($cfg) { $cfg | ConvertTo-Json | Set-Content -LiteralPath $configPath }
 
-$cfg = Load-Config
+$cfg = Get-Config
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Datei-Manager'
@@ -144,7 +144,7 @@ $btnSearch.Add_Click({
     $folder = $tbFolder.Text
     if (-not (Test-Path $folder)) { $lblStatus.Text = 'Ordner nicht gefunden'; return }
     $ext = $tbExt.Text.Trim().TrimStart('.')
-    $pattern = $ext ? "*.$ext" : '*'
+    $pattern = if ($ext) { "*.$ext" } else { '*' }
     Get-ChildItem -LiteralPath $folder -Filter $pattern -File | ForEach-Object {
         $item = New-Object System.Windows.Forms.ListViewItem($_.Name)
         $item.SubItems.Add($_.DirectoryName) | Out-Null
@@ -183,10 +183,10 @@ $btnMove.Add_Click({
 $btnRename.Add_Click({
     foreach ($p in Get-SelectedPaths) {
         $name = [System.IO.Path]::GetFileName($p)
-        $input = [Microsoft.VisualBasic.Interaction]::InputBox('Neuer Name:', 'Umbenennen', $name)
-        if ($input -and $input -ne $name) {
-            $newPath = Join-Path ([System.IO.Path]::GetDirectoryName($p)) $input
-            try { Rename-Item -LiteralPath $p -NewName $input; Write-Log "RENAME $p -> $newPath" } catch { Write-Log "ERROR rename $p : $($_.Exception.Message)" }
+        $enteredName = [Microsoft.VisualBasic.Interaction]::InputBox('Neuer Name:', 'Umbenennen', $name)
+        if ($enteredName -and $enteredName -ne $name) {
+            $newPath = Join-Path ([System.IO.Path]::GetDirectoryName($p)) $enteredName
+            try { Rename-Item -LiteralPath $p -NewName $enteredName; Write-Log "RENAME $p -> $newPath" } catch { Write-Log "ERROR rename $p : $($_.Exception.Message)" }
         }
     }
     $btnSearch.PerformClick()
@@ -232,7 +232,7 @@ $form.Add_FormClosing({
     $cfg.ZipPath     = $cfg.ZipPath
     $cfg.Width       = $form.Width
     $cfg.Height      = $form.Height
-    Save-Config $cfg
+    Set-Config $cfg
 })
 
 [System.Windows.Forms.Application]::Run($form)
