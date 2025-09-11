@@ -1,7 +1,4 @@
-
-
-
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
     Dateimanager.ps1 (Fixed)
     PowerShell-Dateimanager mit WPF-GUI (Dark-Theme).
@@ -10,25 +7,19 @@
 ###############################################################################
 # Helper: Ensure required assemblies
 ###############################################################################
-Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing | Out-Null
-try { Add-Type -AssemblyName System.Web | Out-Null } catch {}
+Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase | Out-Null
+## System.Drawing and System.Web are not needed or not supported in PowerShell 7 for this script
 
 # Config paths
 $ConfigPath = "$(Split-Path -Parent $PSCommandPath)\config.json"
 $LogHtmlPath = "$(Split-Path -Parent $PSCommandPath)\log.html"
 
 ###############################################################################
-# Helper: Ensure required assemblies
-###############################################################################
-Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing | Out-Null
-try { Add-Type -AssemblyName System.Web | Out-Null } catch {}
-
-###############################################################################
 # Constants & Globals
 ###############################################################################
 $Script:AppName = "Dateimanager"
 $Script:Version = "1.0.1"
-$Script:SearchResults = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+$Script:SearchResults = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $Script:LogLock = New-Object Object
 
 ###############################################################################
@@ -50,57 +41,55 @@ function Initialize-LogHtml {
     --card: #151823;
     --text: #e5e7eb;
     --muted: #9ca3af;
-    --accent: #6ee7b7;
-    --accent-2: #60a5fa;
-    --danger: #f87171;
-    --warn: #fbbf24;
-    --ok: #34d399;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
-    --round: 14px;
-    --shadow: 0 10px 30px rgba(0,0,0,.35);
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #0f1115; color: var(--text); font: 15px/1.5 system-ui; padding: 32px; }
-  header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; }
-  h1 { font-size: 22px; margin: 0; letter-spacing:.3px; }
-  .meta { color: var(--muted); font-size: 13px; }
-  .card { background: #151823; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 18px; }
-  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
-  thead th { text-align: left; color: var(--muted); font-weight: 600; padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.08); position: sticky; top: 0; background: #151823; }
-  tbody td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; }
-  tr:hover { background: rgba(255,255,255,.03); }
-  .tag { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(255,255,255,.12); }
-  .level-info { color: #60a5fa; border-color: rgba(96,165,250,.3); }
-  .level-ok { color: #34d399; border-color: rgba(52,211,153,.3); }
-  .level-warn { color: #fbbf24; border-color: rgba(251,191,36,.3); }
-  .level-error { color: #f87171; border-color: rgba(248,113,113,.3); }
-  .path{ color:#d1d5db }
-  .time{ color:#9ca3af }
+                $html = @"
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>$($Script:AppName) – Log</title>
+<style>
+    :root {
+        color-scheme: dark;
+        --bg: #090909;
+        --card: #181818;
+        --text: #e5e7eb;
+        --muted: #8a8a8a;
+        --accent: #3a82f7;
+        --danger: #f87171;
+        --warn: #fbbf24;
+        --ok: #34d399;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #090909; color: var(--text); font: 15px/1.5 system-ui; padding: 32px; }
+    header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin: 0; letter-spacing:.3px; }
+    .meta { color: var(--muted); font-size: 13px; }
+    .card { background: #181818; border: 1px solid #232323; border-radius: 0; padding: 18px; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
+    thead th { text-align: left; color: var(--muted); font-weight: 600; padding: 10px 8px; border-bottom: 1px solid #232323; position: sticky; top: 0; background: #181818; }
+    tbody td { padding: 10px 8px; border-bottom: 1px solid #232323; vertical-align: top; }
+    tr:hover { background: #222; }
+    .tag { display:inline-block; padding: 2px 8px; border-radius: 0; font-size: 13px; border: 1px solid #232323; }
+    .level-info { color: #60a5fa; }
+    .level-ok { color: #34d399; }
+    .level-warn { color: #fbbf24; }
+    .level-error { color: #f87171; }
+    .icon { font-size: 15px; margin-right: 6px; vertical-align: middle; }
+    .path{ color:#d1d5db }
+    .time{ color:#9ca3af }
 </style>
 </head>
 <body>
-  <header>
-    <h1>$($Script:AppName) – Aktivitätslog</h1>
-    <div class="meta">Version $($Script:Version)</div>
-  </header>
-  <div class="card">
-    <table id="log">
-      <thead>
-        <tr>
-          <th>Zeit</th>
-          <th>Aktion</th>
-          <th>Details</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-      </tbody>
-    </table>
-  </div>
-</body>
-</html>
-"@
-        Set-Content -Path $LogHtmlPath -Value $html -Encoding UTF8
+    <header>
+        <h1>$($Script:AppName) – Aktivitätslog</h1>
+        <div class="meta">Version $($Script:Version)</div>
+    </header>
+    <div class="card">
+        <table id="log">
+            <thead>
+                <tr>
     }
 }
 
@@ -119,9 +108,18 @@ function Write-LogHtml {
     elseif ($Level -eq "ERROR") { $levelClass = "level-error" }
 
     $safe = $Details
-    try { $safe = [System.Web.HttpUtility]::HtmlEncode($Details) } catch {}
+    try {
+        $safe = [System.Net.WebUtility]::HtmlEncode($Details)
+    } catch {}
 
-    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $levelClass'>$Level</span></td></tr>"
+    $icon = ""
+    switch ($Level) {
+        "INFO"  { $icon = "<span class='icon'>ℹ️</span>" }
+        "OK"    { $icon = "<span class='icon'>✅</span>" }
+        "WARN"  { $icon = "<span class='icon'>⚠️</span>" }
+        "ERROR" { $icon = "<span class='icon'>❌</span>" }
+    }
+    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $levelClass'>$icon$Level</span></td></tr>"
     $content = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8
     $updated = $content -replace '</tbody>', "$row`n      </tbody>"
     $null = [System.Threading.Monitor]::Enter($Script:LogLock)
@@ -155,7 +153,7 @@ function Get-Config {
         MaxSizeKB      = 0
         ModifiedAfter  = ""
         ModifiedBefore = ""
-        UseRegex       = $false
+        # Regex support entfernt
     }
 }
 
@@ -180,8 +178,7 @@ function Get-MatchingFiles {
         [int]$MinSizeKB = 0,
         [int]$MaxSizeKB = 0,
         [string]$ModifiedAfter = "",
-        [string]$ModifiedBefore = "",
-        [bool]$UseRegex = $false
+        [string]$ModifiedBefore = ""
     )
 
     if (-not (Test-Path $RootPath)) {
@@ -190,11 +187,7 @@ function Get-MatchingFiles {
     }
 
     try {
-        if ($UseRegex) {
-            $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop | Where-Object { $_.Name -match $Pattern }
-        } else {
-            $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop -Filter $Pattern
-        }
+        $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop -Filter $Pattern
 
         if ($MinSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -ge ($MinSizeKB * 1KB) } }
         if ($MaxSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -le ($MaxSizeKB * 1KB) } }
@@ -249,9 +242,9 @@ function New-Archive {
         if (Test-Path $ArchivePath) { Remove-Item -LiteralPath $ArchivePath -Force }
         Compress-Archive -Path (Join-Path $tmp "*") -DestinationPath $ArchivePath -Force
         Remove-Item -LiteralPath $tmp -Recurse -Force
-    Write-LogHtml -Level "OK" -Action "Archiv erstellen" -Details $ArchivePath
+        Write-LogHtml -Level "OK" -Action "Archiv erstellen" -Details $ArchivePath
     } catch {
-    Write-LogHtml -Level "ERROR" -Action "Archiv erstellen" -Details $_.Exception.Message
+        Write-LogHtml -Level "ERROR" -Action "Archiv erstellen" -Details $_.Exception.Message
     }
 }
 
@@ -267,10 +260,10 @@ function New-Backup {
         foreach ($it in $Items) {
             Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $dest $it.Name) -Force
         }
-    Write-LogHtml -Level "OK" -Action "Backup" -Details $dest
+        Write-LogHtml -Level "OK" -Action "Backup" -Details $dest
         return $dest
     } catch {
-    Write-LogHtml -Level "ERROR" -Action "Backup" -Details $_.Exception.Message
+        Write-LogHtml -Level "ERROR" -Action "Backup" -Details $_.Exception.Message
     }
 }
 
@@ -284,65 +277,114 @@ $xaml = @"
         WindowStartupLocation="CenterScreen"
         Background="#0f1115" Foreground="#e5e7eb" FontFamily="Segoe UI">
     <Window.Resources>
-        <SolidColorBrush x:Key="CardBg" Color="#151823"/>
-        <SolidColorBrush x:Key="Accent" Color="#60a5fa"/>
-        <SolidColorBrush x:Key="Accent2" Color="#6ee7b7"/>
+    <SolidColorBrush x:Key="CardBg" Color="#181818"/>
+    <SolidColorBrush x:Key="Accent" Color="#3a82f7"/>
+    <SolidColorBrush x:Key="Accent2" Color="#4fc3f7"/>
+
         <Style TargetType="Button">
             <Setter Property="Margin" Value="6"/>
             <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="Background" Value="#1f2937"/>
+            <Setter Property="Background" Value="#181818"/>
             <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="BorderBrush" Value="#334155"/>
+            <Setter Property="BorderBrush" Value="#232323"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="15"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border CornerRadius="10" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                        <Border CornerRadius="0" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Opacity="0.95">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="6" ShadowDepth="0" Color="#222" Opacity="0.2"/>
+                </Setter.Value>
+            </Setter>
         </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Margin" Value="6"/>
             <Setter Property="Padding" Value="8,6"/>
-            <Setter Property="Background" Value="#111827"/>
+            <Setter Property="Background" Value="#101010"/>
             <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="BorderBrush" Value="#374151"/>
+            <Setter Property="BorderBrush" Value="#232323"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="15"/>
         </Style>
+
         <Style TargetType="CheckBox">
             <Setter Property="Margin" Value="6"/>
         </Style>
+
         <Style TargetType="DatePicker">
             <Setter Property="Margin" Value="6"/>
             <Setter Property="Background" Value="#111827"/>
             <Setter Property="Foreground" Value="#e5e7eb"/>
         </Style>
+
         <Style TargetType="DataGrid">
             <Setter Property="Margin" Value="6"/>
-            <Setter Property="Background" Value="#0f1115"/>
+            <Setter Property="Background" Value="#101010"/>
             <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="#222"/>
-            <Setter Property="RowBackground" Value="#111"/>
-            <Setter Property="AlternatingRowBackground" Value="#151823"/>
+            <Setter Property="FontFamily" Value="Segoe UI, Arial, sans-serif"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="RowHeight" Value="32"/>
+            <Setter Property="GridLinesVisibility" Value="All"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#232323"/>
+            <Setter Property="VerticalGridLinesBrush" Value="#232323"/>
+            <Setter Property="RowBackground" Value="#181818"/>
+            <Setter Property="AlternatingRowBackground" Value="#232323"/>
+            <Setter Property="BorderBrush" Value="#232323"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CellStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="BorderBrush" Value="#232323"/>
+                        <Setter Property="Background" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=Background}"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#23272f"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#3b82f6"/>
+                                <Setter Property="Foreground" Value="#fff"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ColumnHeaderStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridColumnHeader">
+                        <Setter Property="Background" Value="#181818"/>
+                        <Setter Property="Foreground" Value="#a3a3a3"/>
+                        <Setter Property="FontWeight" Value="SemiBold"/>
+                        <Setter Property="FontSize" Value="15"/>
+                        <Setter Property="BorderBrush" Value="#232323"/>
+                        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                        <Setter Property="Padding" Value="8,4,8,4"/>
+                    </Style>
+                </Setter.Value>
+            </Setter>
         </Style>
+
+        <!-- Merged single default GroupBox style -->
         <Style TargetType="GroupBox">
             <Setter Property="Margin" Value="8"/>
             <Setter Property="Padding" Value="10"/>
             <Setter Property="Background" Value="{StaticResource CardBg}"/>
             <Setter Property="BorderBrush" Value="#283044"/>
             <Setter Property="BorderThickness" Value="1"/>
-        </Style>
-        <Style TargetType="GroupBox">
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type GroupBox}">
                         <Grid>
-                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12"/>
+                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0" Opacity="0.70"/>
                             <Grid Margin="6">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -357,6 +399,7 @@ $xaml = @"
             </Setter>
         </Style>
     </Window.Resources>
+
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -365,15 +408,15 @@ $xaml = @"
         </Grid.RowDefinitions>
 
         <StackPanel Orientation="Horizontal" Grid.Row="0">
-            <Button x:Name="BtnLoadCfg" Content="Preset laden"/>
-            <Button x:Name="BtnSaveCfg" Content="Preset speichern"/>
-            <Button x:Name="BtnOpenLogs" Content="Logs anzeigen"/>
+            <Button x:Name="BtnLoadCfg" Content="🗂️ Preset laden"/>
+            <Button x:Name="BtnSaveCfg" Content="💾 Preset speichern"/>
+            <Button x:Name="BtnOpenLogs" Content="📄 Logs anzeigen"/>
             <TextBlock Text=" | " VerticalAlignment="Center" Margin="4"/>
-            <Button x:Name="BtnSearch" Content="Suchen"/>
-            <Button x:Name="BtnCopy" Content="Kopieren"/>
-            <Button x:Name="BtnMove" Content="Verschieben"/>
-            <Button x:Name="BtnArchive" Content="Archiv (ZIP)"/>
-            <Button x:Name="BtnBackup" Content="Backup"/>
+            <Button x:Name="BtnSearch" Content="🔍 Suchen"/>
+            <Button x:Name="BtnCopy" Content="📋 Kopieren"/>
+            <Button x:Name="BtnMove" Content="✂️ Verschieben"/>
+            <Button x:Name="BtnArchive" Content="🗜️ Archiv (ZIP)"/>
+            <Button x:Name="BtnBackup" Content="🛡️ Backup"/>
         </StackPanel>
 
         <Grid Grid.Row="1">
@@ -387,26 +430,10 @@ $xaml = @"
                     <StackPanel>
                         <TextBlock Text="Wurzelpfad"/>
                         <TextBox x:Name="TbRoot"/>
-                        <TextBlock Text="Muster (z.B. *.pdf | Regex siehe unten)"/>
+                        <TextBlock Text="Muster (z.B. *.pdf)"/>
                         <TextBox x:Name="TbPattern"/>
-                        <CheckBox x:Name="CbRegex" Content="Regex verwenden"/>
                         <CheckBox x:Name="CbSub" Content="Unterordner einbeziehen"/>
-                        <StackPanel Orientation="Horizontal">
-                            <StackPanel Width="160">
-                                <TextBlock Text="Min Größe (KB)"/><TextBox x:Name="TbMinKB"/>
-                            </StackPanel>
-                            <StackPanel Width="160">
-                                <TextBlock Text="Max Größe (KB)"/><TextBox x:Name="TbMaxKB"/>
-                            </StackPanel>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal">
-                            <StackPanel Width="160">
-                                <TextBlock Text="Geändert nach"/><DatePicker x:Name="DpAfter"/>
-                            </StackPanel>
-                            <StackPanel Width="160">
-                                <TextBlock Text="Geändert vor"/><DatePicker x:Name="DpBefore"/>
-                            </StackPanel>
-                        </StackPanel>
+                            <!-- Date and size filters removed -->
                     </StackPanel>
                 </GroupBox>
 
@@ -429,16 +456,27 @@ $xaml = @"
                 </Grid.RowDefinitions>
 
                 <DataGrid x:Name="GridResults" Grid.Row="0" AutoGenerateColumns="False" SelectionMode="Extended" CanUserAddRows="False">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="220"/>
-                        <DataGridTextColumn Header="Pfad" Binding="{Binding FullName}" Width="*"/>
-                        <DataGridTextColumn Header="Ordner" Binding="{Binding DirectoryName}" Width="200"/>
-                        <DataGridTextColumn Header="Größe" Binding="{Binding Length}" Width="100"/>
-                        <DataGridTextColumn Header="Geändert" Binding="{Binding LastWriteTime}" Width="160"/>
-                    </DataGrid.Columns>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="220"/>
+                            <DataGridTextColumn Header="Pfad" Binding="{Binding FullName}" Width="*"/>
+                            <DataGridTextColumn Header="Ordner" Binding="{Binding DirectoryName}" Width="200"/>
+                            <DataGridTextColumn Header="Groesse" Binding="{Binding Length}" Width="100"/>
+                            <DataGridTextColumn Header="Geaendert" Binding="{Binding LastWriteTime}" Width="160"/>
+                        </DataGrid.Columns>
+                        <DataGrid.BorderBrush>
+                            <SolidColorBrush Color="#444"/>
+                        </DataGrid.BorderBrush>
+                        <DataGrid.CellStyle>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="BorderBrush" Value="#444"/>
+                                <Setter Property="Background" Value="#181818"/>
+                            </Style>
+                        </DataGrid.CellStyle>
+                        <DataGrid.GridLinesVisibility>All</DataGrid.GridLinesVisibility>
                 </DataGrid>
 
-                <TextBlock Grid.Row="1" Text="Tipp: Mehrfachauswahl mit Strg/Shift. Aktionen betreffen markierte Zeilen; ohne Auswahl wirken sie auf alle Treffer." Margin="6" Foreground="#9ca3af"/>
+                <TextBlock Grid.Row="1" Text="Tipp: Mehrfachauswahl mit Strg/Shift. Aktionen betreffen markierte Zeilen; ohne Auswahl wirken alle Aktionen auf alle Treffer." Margin="6" Foreground="#9ca3af"/>
             </Grid>
         </Grid>
 
@@ -467,12 +505,8 @@ $BtnBackup    = $window.FindName('BtnBackup')
 
 $TbRoot       = $window.FindName('TbRoot')
 $TbPattern    = $window.FindName('TbPattern')
-$CbRegex      = $window.FindName('CbRegex')
 $CbSub        = $window.FindName('CbSub')
-$TbMinKB      = $window.FindName('TbMinKB')
-$TbMaxKB      = $window.FindName('TbMaxKB')
-$DpAfter      = $window.FindName('DpAfter')
-$DpBefore     = $window.FindName('DpBefore')
+## Removed Min/Max KB and Date controls
 
 $TbDest       = $window.FindName('TbDest')
 $TbBackupRoot = $window.FindName('TbBackupRoot')
@@ -484,7 +518,6 @@ $StatusText   = $window.FindName('StatusText')
 $GridResults.ItemsSource = $Script:SearchResults
 
 ###############################################################################
-
 # Load initial config
 ###############################################################################
 $cfg = Get-Config
@@ -494,11 +527,7 @@ $CbSub.IsChecked   = [bool]$cfg.IncludeSub
 $TbDest.Text       = $cfg.Destination
 $TbBackupRoot.Text = $cfg.BackupRoot
 $TbArchive.Text    = $cfg.ArchivePath
-$TbMinKB.Text      = [string]$cfg.MinSizeKB
-$TbMaxKB.Text      = [string]$cfg.MaxSizeKB
-$CbRegex.IsChecked = [bool]$cfg.UseRegex
-if ($cfg.ModifiedAfter)  { $DpAfter.SelectedDate  = [datetime]$cfg.ModifiedAfter }
-if ($cfg.ModifiedBefore) { $DpBefore.SelectedDate = [datetime]$cfg.ModifiedBefore }
+## Removed Min/Max KB and Date config loading
 
 Initialize-LogHtml
 Write-LogHtml -Level "INFO" -Action "Start" -Details "Anwendung gestartet"
@@ -521,6 +550,7 @@ function Update-Status {
 ###############################################################################
 # Wire events
 ###############################################################################
+$BtnLoadCfg.Add_Click({
     $cfg = Get-Config
     $TbRoot.Text       = $cfg.RootPath
     $TbPattern.Text    = $cfg.Pattern
@@ -528,20 +558,11 @@ function Update-Status {
     $TbDest.Text       = $cfg.Destination
     $TbBackupRoot.Text = $cfg.BackupRoot
     $TbArchive.Text    = $cfg.ArchivePath
-    $TbMinKB.Text      = [string]$cfg.MinSizeKB
-    $TbMaxKB.Text      = [string]$cfg.MaxSizeKB
-    $CbRegex.IsChecked = [bool]$cfg.UseRegex
-    if ($cfg.ModifiedAfter)  { $DpAfter.SelectedDate  = [datetime]$cfg.ModifiedAfter } else { $DpAfter.SelectedDate = $null }
-    if ($cfg.ModifiedBefore) { $DpBefore.SelectedDate = [datetime]$cfg.ModifiedBefore } else { $DpBefore.SelectedDate = $null }
+    ## Removed Min/Max KB and Date config loading
     Update-Status "Preset geladen."
 })
 
 $BtnSaveCfg.Add_Click({
-    $modAfter = ""
-    if ($DpAfter.SelectedDate)  { $modAfter  = $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") }
-    $modBefore = ""
-    if ($DpBefore.SelectedDate) { $modBefore = $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") }
-
     $cfg = [pscustomobject]@{
         RootPath       = $TbRoot.Text
         Pattern        = $TbPattern.Text
@@ -549,11 +570,7 @@ $BtnSaveCfg.Add_Click({
         Destination    = $TbDest.Text
         BackupRoot     = $TbBackupRoot.Text
         ArchivePath    = $TbArchive.Text
-        MinSizeKB      = [int]($TbMinKB.Text  -as [int])
-        MaxSizeKB      = [int]($TbMaxKB.Text  -as [int])
-        ModifiedAfter  = $modAfter
-        ModifiedBefore = $modBefore
-        UseRegex       = [bool]$CbRegex.IsChecked
+        # Removed Min/Max KB and Date
     }
     Save-Config -Cfg $cfg
     Update-Status "Preset gespeichert."
@@ -568,16 +585,7 @@ $BtnOpenLogs.Add_Click({
 $BtnSearch.Add_Click({
     $Script:SearchResults.Clear()
 
-    $modAfter = ""
-    if ($DpAfter.SelectedDate)  { $modAfter  = $DpAfter.SelectedDate.Value.ToString("yyyy-MM-dd") }
-    $modBefore = ""
-    if ($DpBefore.SelectedDate) { $modBefore = $DpBefore.SelectedDate.Value.ToString("yyyy-MM-dd") }
-
-    $minKB = 0; if ($TbMinKB.Text) { $minKB = [int]($TbMinKB.Text -as [int]) }
-    $maxKB = 0; if ($TbMaxKB.Text) { $maxKB = [int]($TbMaxKB.Text -as [int]) }
-
-    $files = Get-MatchingFiles -RootPath $TbRoot.Text -Pattern $TbPattern.Text -Recurse ([bool]$CbSub.IsChecked) `
-        -MinSizeKB $minKB -MaxSizeKB $maxKB -ModifiedAfter $modAfter -ModifiedBefore $modBefore -UseRegex ([bool]$CbRegex.IsChecked)
+    $files = Get-MatchingFiles -RootPath $TbRoot.Text -Pattern $TbPattern.Text -Recurse ([bool]$CbSub.IsChecked)
 
     foreach ($f in $files) { [void]$Script:SearchResults.Add($f) }
     Update-Status ("Treffer: {0}" -f $Script:SearchResults.Count)
@@ -597,14 +605,16 @@ $BtnMove.Add_Click({
     Update-Status "Verschieben abgeschlossen."
 })
 
+$BtnArchive.Add_Click({
     $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewaehlt."; return }
+    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
     New-Archive -Items $sel -ArchivePath $TbArchive.Text
     Update-Status "Archiv erstellt."
 })
 
+$BtnBackup.Add_Click({
     $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewaehlt."; return }
+    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
     $dest = New-Backup -Items $sel -BackupRoot $TbBackupRoot.Text
     if ($dest) { Update-Status ("Backup erstellt: {0}" -f $dest) }
 })
@@ -612,5 +622,27 @@ $BtnMove.Add_Click({
 ###############################################################################
 # Run
 ###############################################################################
+
+# Add Closing event handler to prompt user about logs
+$window.Add_Closing({
+        $dlgResult = [System.Windows.MessageBox]::Show(
+            "Bevor sie das Programm schliessen, sollen die Logs gespeichert oder gelöscht werden?",
+            "Log behalten oder löschen?",
+            [System.Windows.MessageBoxButton]::YesNoCancel,
+            [System.Windows.MessageBoxImage]::Question
+        )
+    if ($dlgResult -eq [System.Windows.MessageBoxResult]::Cancel) {
+        $_.Cancel = $true
+        return
+    }
+    elseif ($dlgResult -eq [System.Windows.MessageBoxResult]::No) {
+        # Reset logs: overwrite log file with empty log
+        Remove-Item -Path $LogHtmlPath -Force -ErrorAction SilentlyContinue
+        Initialize-LogHtml
+            Write-LogHtml -Level "INFO" -Action "Reset" -Details "Log wurde zurückgesetzt."
+    } else {
+        # Keep logs: do nothing
+        Write-LogHtml -Level "INFO" -Action "Ende" -Details "Anwendung geschlossen (Log behalten)"
+    }
+})
 $null = $window.ShowDialog()
-Write-LogHtml -Level "INFO" -Action "Ende" -Details "Anwendung geschlossen"
