@@ -26,72 +26,58 @@ $Script:LogLock = New-Object Object
 # Logging (HTML)
 ###############################################################################
 function Initialize-LogHtml {
-    if (-not (Test-Path $LogHtmlPath)) {
-        $html = @"
-<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>$($Script:AppName) – Log</title>
-<style>
-  :root {
-    color-scheme: dark;
-    --bg: #0f1115;
-    --card: #151823;
-    --text: #e5e7eb;
-    --muted: #9ca3af;
-                $html = @"
-<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>$($Script:AppName) – Log</title>
-<style>
-    :root {
-        color-scheme: dark;
-        --bg: #090909;
-        --card: #181818;
-        --text: #e5e7eb;
-        --muted: #8a8a8a;
-        --accent: #3a82f7;
-        --danger: #f87171;
-        --warn: #fbbf24;
-        --ok: #34d399;
-        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #090909; color: var(--text); font: 15px/1.5 system-ui; padding: 32px; }
-    header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; }
-    h1 { font-size: 22px; margin: 0; letter-spacing:.3px; }
-    .meta { color: var(--muted); font-size: 13px; }
-    .card { background: #181818; border: 1px solid #232323; border-radius: 0; padding: 18px; }
-    table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
-    thead th { text-align: left; color: var(--muted); font-weight: 600; padding: 10px 8px; border-bottom: 1px solid #232323; position: sticky; top: 0; background: #181818; }
-    tbody td { padding: 10px 8px; border-bottom: 1px solid #232323; vertical-align: top; }
-    tr:hover { background: #222; }
-    .tag { display:inline-block; padding: 2px 8px; border-radius: 0; font-size: 13px; border: 1px solid #232323; }
-    .level-info { color: #60a5fa; }
-    .level-ok { color: #34d399; }
-    .level-warn { color: #fbbf24; }
-    .level-error { color: #f87171; }
-    .icon { font-size: 15px; margin-right: 6px; vertical-align: middle; }
-    .path{ color:#d1d5db }
-    .time{ color:#9ca3af }
-</style>
-</head>
-<body>
-    <header>
-        <h1>$($Script:AppName) – Aktivitätslog</h1>
-        <div class="meta">Version $($Script:Version)</div>
-    </header>
-    <div class="card">
-        <table id="log">
-            <thead>
-                <tr>
-    }
+    if (Test-Path $LogHtmlPath) { return }
+    $app = $Script:AppName
+    $ver = $Script:Version
+    $lines = @(
+        '<!DOCTYPE html>'
+        '<html lang="de">'
+        '<head>'
+        '<meta charset="utf-8"/>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
+        ("<title>{0} – Log</title>" -f $app)
+        '<style>'
+        ':root { color-scheme:dark; --bg:#090909; --card:#181818; --text:#e5e7eb; --muted:#8a8a8a; --accent:#3a82f7; --danger:#f87171; --warn:#fbbf24; --ok:#34d399; --mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }'
+        '* { box-sizing:border-box; }'
+        'body { margin:0; background:#090909; color:var(--text); font:15px/1.5 system-ui; padding:32px; }'
+        'header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }'
+        'h1 { font-size:22px; margin:0; letter-spacing:.3px; }'
+        '.meta { color:var(--muted); font-size:13px; }'
+        '.card { background:#181818; border:1px solid #232323; border-radius:0; padding:18px; }'
+        'table { width:100%; border-collapse:collapse; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:13px; }'
+        'thead th { text-align:left; color:var(--muted); font-weight:600; padding:10px 8px; border-bottom:1px solid #232323; position:sticky; top:0; background:#181818; }'
+        'tbody td { padding:10px 8px; border-bottom:1px solid #232323; vertical-align:top; }'
+        'tr:hover { background:#222; }'
+        '.tag { display:inline-block; padding:2px 8px; border-radius:0; font-size:13px; border:1px solid #232323; }'
+        '.level-info { color:#60a5fa; }'
+        '.level-ok { color:#34d399; }'
+        '.level-warn { color:#fbbf24; }'
+        '.level-error { color:#f87171; }'
+        '.icon { font-size:15px; margin-right:6px; vertical-align:middle; }'
+        '.path { color:#d1d5db }'
+        '.time { color:#9ca3af }'
+        '</style>'
+        '</head>'
+        '<body>'
+        '<header>'
+        ("<h1>{0} – Aktivitätslog</h1>" -f $app)
+        ("<div class='meta'>Version {0}</div>" -f $ver)
+        '</header>'
+        '<div class="card">'
+        '<table id="log">'
+        '<thead>'
+        '<tr><th>Zeit</th><th>Aktion</th><th>Details</th><th>Status</th></tr>'
+        '</thead>'
+        '<tbody>'
+        '</tbody>'
+        '</table>'
+        '</div>'
+        '</body>'
+        '</html>'
+    )
+    Set-Content -Path $LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8
 }
+
 
 function Write-LogHtml {
     param(
