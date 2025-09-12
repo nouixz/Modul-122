@@ -10,9 +10,11 @@
 Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase | Out-Null
 ## System.Drawing and System.Web are not needed or not supported in PowerShell 7 for this script
 
-# Config paths
-$ConfigPath = "$(Split-Path -Parent $PSCommandPath)\config.json"
-$LogHtmlPath = "$(Split-Path -Parent $PSCommandPath)\log.html"
+# Config paths (robust Ermittlung auch beim Dot-Sourcing oder VSCode Run Selection)
+$Script:ScriptRoot = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+if (-not (Test-Path -LiteralPath $Script:ScriptRoot -PathType Container)) { $Script:ScriptRoot = (Get-Location).Path }
+$ConfigPath = Join-Path $Script:ScriptRoot 'config.json'
+$LogHtmlPath = Join-Path $Script:ScriptRoot 'log.html'
 
 ###############################################################################
 # Constants & Globals
@@ -28,7 +30,12 @@ $Script:LogLock = New-Object Object
 # Funktion zur Initialisierung der HTML-Logdatei.
 # Erstellt die Datei nur, wenn sie noch nicht existiert. Verwendet ein dunkles Layout.
 function Initialize-LogHtml {
-    if (Test-Path $LogHtmlPath) { return }
+    # Sicherstellen, dass Zielverzeichnis existiert
+    $logDir = Split-Path -Parent $LogHtmlPath
+    if ($logDir -and -not (Test-Path -LiteralPath $logDir)) {
+        try { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } catch { }
+    }
+    if (Test-Path -LiteralPath $LogHtmlPath) { return }
     $app = $Script:AppName
     $ver = $Script:Version
     $lines = @(
@@ -77,7 +84,20 @@ function Initialize-LogHtml {
         '</body>'
         '</html>'
     )
-    Set-Content -Path $LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8
+    try {
+        Set-Content -Path $LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # Fallback auf %TEMP% wenn Erstellung im Repo-Verzeichnis fehlschlägt (z.B. Rechte, Lock, Virenscanner)
+        $fallbackDir = Join-Path $env:TEMP 'DateimanagerLogs'
+        try { if (-not (Test-Path -LiteralPath $fallbackDir)) { New-Item -ItemType Directory -Path $fallbackDir -Force | Out-Null } } catch {}
+        $global:LogHtmlPath = Join-Path $fallbackDir 'log.html'
+        try {
+            Set-Content -Path $global:LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8 -ErrorAction Stop
+            Write-Host "[LOG] Primärer Pfad fehlgeschlagen -> Fallback verwendet: $global:LogHtmlPath" -ForegroundColor Yellow
+        } catch {
+            Write-Host "[LOG] Erstellung auch im Fallback fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
 }
 
 
@@ -113,11 +133,17 @@ function Write-LogHtml {
         "ERROR" { $icon = "<span class='icon'>❌</span>" }
     }
     $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $levelClass'>$icon$Level</span></td></tr>"
-    $content = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8
-    $updated = $content -replace '</tbody>', "$row`n      </tbody>"
+    if (-not (Test-Path -LiteralPath $LogHtmlPath)) {
+        Initialize-LogHtml
+        if (-not (Test-Path -LiteralPath $LogHtmlPath)) { Write-Host "[LOG] Kein Log-Pfad verfuegbar." -ForegroundColor Red; return }
+    }
     $null = [System.Threading.Monitor]::Enter($Script:LogLock)
     try {
-        Set-Content -Path $LogHtmlPath -Value $updated -Encoding UTF8
+        $content = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8 -ErrorAction Stop
+        $updated = $content -replace '</tbody>', "$row`n      </tbody>"
+        Set-Content -Path $LogHtmlPath -Value $updated -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        Write-Host "[LOG] Schreibfehler: $($_.Exception.Message)" -ForegroundColor Red
     } finally {
         [System.Threading.Monitor]::Exit($Script:LogLock)
     }
@@ -256,16 +282,44 @@ function New-Backup {
         [string]$BackupRoot
     )
     try {
-        $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        if (-not $Items -or $Items.Count -eq 0) {
+            Write-LogHtml -Level 'WARN' -Action 'Backup' -Details 'Keine Dateien übergeben'
+            return
+        }
+        if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
+            $BackupRoot = Join-Path $HOME 'Backups'
+            Write-LogHtml -Level 'INFO' -Action 'Backup' -Details "Leerer BackupRoot -> Verwende $BackupRoot"
+        }
+        if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
+            try {
+                New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+                Write-LogHtml -Level 'OK' -Action 'Backup' -Details "Basisordner erstellt: $BackupRoot"
+            } catch {
+                throw "BackupRoot kann nicht erstellt werden: $BackupRoot - $($_.Exception.Message)"
+            }
+        }
+        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
         $dest = Join-Path $BackupRoot "Backup_$stamp"
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        $copied = 0
         foreach ($it in $Items) {
-            Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $dest $it.Name) -Force
+            try {
+                $targetFile = Join-Path $dest $it.Name
+                Copy-Item -LiteralPath $it.FullName -Destination $targetFile -Force -ErrorAction Stop
+                Write-LogHtml -Level 'INFO' -Action 'Backup-Datei' -Details "$($it.FullName) -> $targetFile"
+                $copied++
+            } catch {
+                Write-LogHtml -Level 'ERROR' -Action 'Backup-Datei' -Details "$($it.FullName): $($_.Exception.Message)"
+            }
         }
-        Write-LogHtml -Level "OK" -Action "Backup" -Details $dest
+        if ($copied -gt 0) {
+            Write-LogHtml -Level 'OK' -Action 'Backup' -Details "$dest (Dateien: $copied)"
+        } else {
+            Write-LogHtml -Level 'WARN' -Action 'Backup' -Details 'Keine Dateien kopiert'
+        }
         return $dest
     } catch {
-        Write-LogHtml -Level "ERROR" -Action "Backup" -Details $_.Exception.Message
+        Write-LogHtml -Level 'ERROR' -Action 'Backup' -Details $_.Exception.Message
     }
 }
 
@@ -532,7 +586,7 @@ $TbArchive.Text    = $cfg.ArchivePath
 ## Removed Min/Max KB and Date config loading
 
 Initialize-LogHtml
-Write-LogHtml -Level "INFO" -Action "Start" -Details "Anwendung gestartet"
+Write-LogHtml -Level 'INFO' -Action 'Start' -Details "Anwendung gestartet (Root=$($Script:ScriptRoot))"
 
 ###############################################################################
 # UI helpers
