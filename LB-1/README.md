@@ -1,61 +1,57 @@
-# Dateimanager – README
+# Dateimanager – PowerShell Skript  
 
-Ein schlanker Datei‑Manager in **PowerShell 7** mit **WPF‑GUI** (Dark‑Theme) für Suchen, Kopieren/Verschieben, ZIP‑Archivierung und zeitgestempelte Backups – inklusive HTML‑Log.
+## 📖 Beschreibung  
+Dieses Projekt ist ein **Dateimanager in PowerShell** mit einer grafischen Benutzeroberfläche (WPF).  
+Es automatisiert wiederkehrende Dateioperationen und erleichtert so die tägliche Arbeit.  
 
-## Features
-- **Suche** nach Dateien mit Muster (z. B. `*.pdf`) ab Startordner, optional rekursiv.
-- **Mehrfachauswahl** in einer Tabelle (Name, Pfad, Ordner, Größe, Änderungsdatum).
-- **Kopieren/Verschieben** der Auswahl in ein Zielverzeichnis.
-- **ZIP‑Archiv** aus der Auswahl erstellen.
-- **Backup** in einen datums-/zeitgestempelten Ordner.
-- **Konfiguration** in `config.json` (wird gelesen/geschrieben).
-- **HTML‑Log (`log.html`)** mit farbigen Leveln (INFO/OK/WARN/ERROR); Entscheidung beim Beenden: Log behalten oder zurücksetzen.
+Der Dateimanager bietet unter anderem:  
+- Dateien und Ordner **kopieren, verschieben und löschen**  
+- **Backups** und **Archive** von Verzeichnissen erstellen  
+- **Suchfunktion** für Dateien und Ordner  
+- **Konfigurationsdateien** speichern und laden  
+- Automatisierte **HTML-Protokollierung** aller ausgeführten Aktionen  
 
-## Systemvoraussetzungen
-- **Windows** mit .NET/WPF (PresentationCore, PresentationFramework, WindowsBase).
-- **PowerShell 7.0+** (`#Requires -Version 7.0`).
-- Ausführungsrichtlinie, die das Starten lokaler Skripte erlaubt (ggf. `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`).
+Das Projekt wurde im Rahmen des Moduls *122 – Abläufe mit einer Skriptsprache automatisieren* entwickelt.  
 
-## Schnellstart
-1. **PowerShell 7 öffnen**.
-2. In den Ordner mit `Dateimanager.ps1` wechseln.
-3. Script starten:  
-   ```pwsh
-   pwsh -File .\Dateimanager.ps1
-   ```
-4. GUI bedienen:
-   - Startordner und Muster festlegen → **Suchen**.
-   - Treffer ggf. auswählen (ohne Auswahl werden alle Treffer genommen).
-   - Zielpfade für **Kopieren/Verschieben**, **Backup** oder **Archiv** setzen.
-   - Ergebnisaktionen ausführen.
+---
 
-## Konfigurationsdatei (`config.json`)
-Wird im Skriptverzeichnis gespeichert/geladen. Felder:
-- `RootPath` – Startordner für die Suche.
-- `Pattern` – Suchmuster (Standard `*`, z. B. `*.jpg`).
-- `IncludeSub` – `true|false` für rekursive Suche.
-- `Destination` – Zielordner für Kopieren/Verschieben.
-- `BackupRoot` – Basisordner für Backups.
-- `ArchivePath` – Zielpfad für die ZIP‑Datei.
-- (intern reserviert, aktuell nicht genutzt): `MinSizeKB`, `MaxSizeKB`, `ModifiedAfter`, `ModifiedBefore`.
+## ⚙️ Systemvoraussetzungen  
+- Windows 10 oder neuer  
+- PowerShell 5.1 oder PowerShell 7+  
+- .NET Framework (für WPF erforderlich)  
 
-Konfiguration per Buttons **Laden/Speichern** in der GUI steuerbar.
+---
 
-## Logging
-- Automatisches Anlegen/Aktualisieren von **`log.html`** im Skriptverzeichnis.
-- Einträge enthalten Zeitstempel, Level, Aktion, Details.
-- Beim Schließen der App werden Sie gefragt, ob das Log **behalten**, **gelöscht/neu angelegt** oder der Vorgang **abgebrochen** werden soll.
+## 🚀 Installation  
+1. Repository oder Skript herunterladen  
+2. Skript entpacken (falls ZIP-Datei)  
+3. PowerShell öffnen und ins Projektverzeichnis wechseln  
+4. Skript starten:  
+   ```powershell
+   .\Dateimanager.ps1
+   ```  
 
-## Ordner/Datei‑Operationen
-- **Kopieren/Verschieben**: legt Zielordner bei Bedarf an; überschreibt vorhandene Dateien.
-- **ZIP‑Archiv**: kopiert Auswahl in ein Temp‑Verzeichnis und erstellt daraus ein ZIP (`Compress-Archive`).
-- **Backup**: erstellt `Backup_yyyyMMdd_HHmmss` unter `BackupRoot` und kopiert die Auswahl hinein.
+---
 
-## Bekannte Grenzen
-- Filter nach Größe/Datum sind im UI vorbereitet, aber derzeit **deaktiviert**.
-- Aktionen überschreiben gleichnamige Dateien ohne Rückfrage.
-- Pfadlängen/ACL‑Einschränkungen des OS gelten weiterhin.
+## 🖥️ Nutzung  
+- Über die grafische Oberfläche können Dateioperationen per Mausklick gestartet werden  
+- **Buttons**:  
+  - **Copy** → Dateien/Ordner kopieren  
+  - **Move** → Dateien/Ordner verschieben  
+  - **Delete** → Dateien/Ordner löschen  
+  - **Backup/Archive** → Verzeichnis sichern oder archivieren  
+  - **Search** → Dateien oder Ordner suchen  
+  - **Config Save/Load** → Einstellungen speichern oder laden  
+  - **Open Logs** → HTML-Protokolle anzeigen  
 
-## Lizenz & Autor
-- App‑Name/Version im Skript: **Dateimanager 1.0.1**
-- Lizenz: (bitte ergänzen) – z. B. MIT.
+---
+
+## 📝 Logging  
+Alle ausgeführten Aktionen werden automatisch in einer **HTML-Logdatei** protokolliert.  
+Dadurch ist jederzeit nachvollziehbar, wann welche Dateioperation durchgeführt wurde.  
+
+---
+
+## 👨‍💻 Autor  
+Chavo Moser  
+ICT-Fachmann EFZ (in Ausbildung)  
