@@ -522,11 +522,35 @@ $xaml = @"
                         <DataGrid.BorderBrush>
                             <SolidColorBrush Color="#444"/>
                         </DataGrid.BorderBrush>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="Background" Value="#181818"/>
+                                <Setter Property="Foreground" Value="#e5e7eb"/>
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#3b82f6"/>
+                                        <Setter Property="Foreground" Value="#ffffff"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#253a6b"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
                         <DataGrid.CellStyle>
                             <Style TargetType="DataGridCell">
                                 <Setter Property="BorderThickness" Value="1"/>
                                 <Setter Property="BorderBrush" Value="#444"/>
                                 <Setter Property="Background" Value="#181818"/>
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#3b82f6"/>
+                                        <Setter Property="Foreground" Value="#ffffff"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#253a6b"/>
+                                    </Trigger>
+                                </Style.Triggers>
                             </Style>
                         </DataGrid.CellStyle>
                         <DataGrid.GridLinesVisibility>All</DataGrid.GridLinesVisibility>
