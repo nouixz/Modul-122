@@ -16,7 +16,7 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
 }
 
 ###############################################################################
-# Required assemblies
+# Erforderliche Assemblys
 ###############################################################################
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing | Out-Null
 Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
@@ -33,7 +33,7 @@ $Script:LogLock = New-Object object
 $LogHtmlPath = Join-Path $Script:ScriptRoot 'log.html'
 
 ###############################################################################
-# HTML Logging (reichhaltig – „altes“ Logging)
+# HTML-Logging (reichhaltig – „altes“ Logging)
 ###############################################################################
 function Initialize-LogHtml {
     $dir = Split-Path -Parent $LogHtmlPath
@@ -121,7 +121,7 @@ function Write-LogHtml {
 }
 
 ###############################################################################
-# Helpers
+# Hilfsfunktionen
 ###############################################################################
 function Get-ActionStamp { if (-not $Script:ActionStamp) { $Script:ActionStamp = Get-Date -Format 'yyyyMMdd_HHmmss' }; return $Script:ActionStamp }
 function Reset-ActionStamp { $Script:ActionStamp = $null }
@@ -183,7 +183,7 @@ function Format-FileSize {
 }
 
 ###############################################################################
-# Build Windows Forms UI
+# Windows Forms-Benutzeroberfläche erstellen
 ###############################################################################
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "$($Script:AppName) $($Script:Version)"
@@ -283,7 +283,7 @@ $form.Controls.AddRange(@(
 ))
 
 ###############################################################################
-# Defaults & status
+# Standardwerte & Status
 ###############################################################################
 $tbRoot.Text    = "$HOME"
 $tbPattern.Text = '*'
@@ -291,10 +291,11 @@ $tbDest.Text    = Join-Path $HOME 'Desktop'
 $tbBackup.Text  = Join-Path $HOME 'Backups'
 $tbArchive.Text = Join-Path (Join-Path $HOME 'Desktop') 'Archiv.zip'
 
+# Setzt den Text in der Statuszeile (unten links im Fenster)
 function Set-Status([string]$msg) { $lblStatus.Text = $msg }
 
 ###############################################################################
-# Events
+# Ereignisse
 ###############################################################################
 $btnBrowseRoot.Add_Click({ $sel = Select-Folder -InitialPath $tbRoot.Text; if ($sel) { $tbRoot.Text = $sel } })
 $btnBrowseDest.Add_Click({ $sel = Select-Folder -InitialPath $tbDest.Text; if ($sel) { $tbDest.Text = $sel } })
@@ -427,7 +428,7 @@ $btnBackup.Add_Click({
 $lnkLog.Add_Click({ Initialize-LogHtml; if (Test-Path -LiteralPath $LogHtmlPath) { Start-Process -FilePath $LogHtmlPath } })
 
 ###############################################################################
-# Startup
+# Start
 ###############################################################################
 Initialize-LogHtml
 Write-LogHtml -Level 'INFO' -Action 'Start' -Details ("Root={0}" -f $Script:ScriptRoot)
