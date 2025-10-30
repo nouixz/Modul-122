@@ -5,28 +5,13 @@
 #>
 
 ###############################################################################
-# Admin-Rechte und STA erzwingen (WinForms benötigt STA)
+# Single-Threaded Apartment erzwingen (WinForms benötigt STA)
 ###############################################################################
-if ($IsWindows) {
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     $scriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { $null }
-    $isAdmin = $false
-    try {
-        $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $wp = New-Object Security.Principal.WindowsPrincipal($wi)
-        $isAdmin = $wp.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-    } catch {}
-    $isSTA = ([Threading.Thread]::CurrentThread.ApartmentState -eq 'STA')
-
-    if ($scriptPath) {
-        if (-not $isAdmin) {
-            # Neu starten als Admin und STA
-            Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',"$scriptPath") -WindowStyle Normal | Out-Null
-            return
-        } elseif (-not $isSTA) {
-            # Bereits Admin, aber nicht STA -> neu starten mit STA
-            Start-Process -FilePath "powershell.exe" -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',"$scriptPath") -WindowStyle Normal | Out-Null
-            return
-        }
+    if ($scriptPath -and $IsWindows) {
+        Start-Process -FilePath "powershell.exe" -ArgumentList @('-NoProfile','-STA','-File',"$scriptPath") -WindowStyle Normal | Out-Null
+        return
     }
 }
 
@@ -184,6 +169,19 @@ function Get-SelectedFiles {
     return @($lvFiles.Items | ForEach-Object { $_.Tag })
 }
 
+# Formatiert Bytes als menschenlesbare Größe (z. B. 1.2 MB)
+function Format-FileSize {
+    param([long]$Bytes)
+    try {
+        $size = [double]$Bytes
+        $units = @('B','KB','MB','GB','TB','PB')
+        $idx = 0
+        while ($size -ge 1024 -and $idx -lt ($units.Count - 1)) { $size /= 1024; $idx++ }
+        if ($idx -eq 0) { return ("{0:N0} {1}" -f $size, $units[$idx]) }
+        else { return ("{0:N1} {1}" -f $size, $units[$idx]) }
+    } catch { return "$Bytes B" }
+}
+
 ###############################################################################
 # Build Windows Forms UI
 ###############################################################################
@@ -260,6 +258,7 @@ $lvFiles.Columns.Add('Pfad',520)   | Out-Null
 $lvFiles.Columns.Add('Ordner',200) | Out-Null
 $lvFiles.Columns.Add('Groesse',100)| Out-Null
 $lvFiles.Columns.Add('Geaendert',160)| Out-Null
+$lvFiles.Columns[3].TextAlign = [System.Windows.Forms.HorizontalAlignment]::Right
 
 $status = New-Object System.Windows.Forms.StatusStrip
 $lblStatus = New-Object System.Windows.Forms.ToolStripStatusLabel; $lblStatus.Text = 'Bereit.'
@@ -316,19 +315,31 @@ $btnSearch.Add_Click({
     try {
         $btnSearch.Enabled = $false; $pbSearch.Visible = $true; Set-Status 'Suche läuft…'
     if (-not (Test-Path -LiteralPath $tbRoot.Text)) { Set-Status "Pfad nicht gefunden"; Write-LogHtml -Level 'ERROR' -Action 'Suche' -Details "Pfad nicht gefunden: $($tbRoot.Text)"; return }
-    $root = $tbRoot.Text
-    $pattern = if ([string]::IsNullOrWhiteSpace($tbPattern.Text)) { '*' } else { $tbPattern.Text }
-    # Robuste Suche: -Include benötigt Wildcard im Pfad; Fehler (Zugriff) werden unterdrückt
-    $searchPath = (Join-Path $root '*')
-    $files = Get-ChildItem -Path $searchPath -Recurse -File -Include $pattern -ErrorAction SilentlyContinue
+        $root = $tbRoot.Text
+        # Muster normalisieren: Unterstützung für ".txt" oder "txt" -> "*.txt"; mehrere Muster via "," oder ";"
+        if ([string]::IsNullOrWhiteSpace($tbPattern.Text)) {
+            $patterns = @('*')
+        } else {
+            $rawParts = $tbPattern.Text -split '[,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $patterns = @()
+            foreach ($p in $rawParts) {
+                if ($p -match '[\*\?\[]') { $patterns += $p }
+                elseif ($p.StartsWith('.')) { $patterns += "*$p" }
+                else { $patterns += "*.$p" }
+            }
+            if ($patterns.Count -eq 0) { $patterns = @('*') }
+        }
+        # Robuste Suche: -Include benötigt Wildcard im Pfad; Fehler (Zugriff) werden unterdrückt
+        $searchPath = (Join-Path $root '*')
+        $files = Get-ChildItem -Path $searchPath -Recurse -File -Include $patterns -ErrorAction SilentlyContinue
         $count = 0
         $lvFiles.BeginUpdate()
         foreach ($f in $files) {
             $item = New-Object System.Windows.Forms.ListViewItem($f.Name)
             [void]$item.SubItems.Add($f.FullName)
             [void]$item.SubItems.Add($f.DirectoryName)
-            [void]$item.SubItems.Add($f.Length)
-            [void]$item.SubItems.Add($f.LastWriteTime)
+            [void]$item.SubItems.Add((Format-FileSize -Bytes $f.Length))
+            [void]$item.SubItems.Add(($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')))
             $item.Tag = $f
             $lvFiles.Items.Add($item) | Out-Null
             $count++
