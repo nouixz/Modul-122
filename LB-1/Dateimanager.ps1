@@ -1,40 +1,43 @@
 #Requires -Version 7.0
 <#
-    Dateimanager.ps1 (Fixed)
-    PowerShell-Dateimanager mit WPF-GUI (Dark-Theme).
+    Dateimanager.ps1
+    PowerShell-Dateimanager mit Windows Forms GUI und HTML-Logging.
 #>
 
 ###############################################################################
-# Helper: Ensure required assemblies
+# Single-Threaded Apartment erzwingen (WinForms benötigt STA)
 ###############################################################################
-Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase | Out-Null
-## System.Drawing and System.Web are not needed or not supported in PowerShell 7 for this script
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+    $scriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { $null }
+    if ($scriptPath -and $IsWindows) {
+        Start-Process -FilePath "powershell.exe" -ArgumentList @('-NoProfile','-STA','-File',"$scriptPath") -WindowStyle Normal | Out-Null
+        return
+    }
+}
 
-# Config paths (robust Ermittlung auch beim Dot-Sourcing oder VSCode Run Selection)
-$Script:ScriptRoot = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
-if (-not (Test-Path -LiteralPath $Script:ScriptRoot -PathType Container)) { $Script:ScriptRoot = (Get-Location).Path }
-$ConfigPath = Join-Path $Script:ScriptRoot 'config.json'
-$LogHtmlPath = Join-Path $Script:ScriptRoot 'log.html'
+###############################################################################
+# Required assemblies
+###############################################################################
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing | Out-Null
+Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 
 ###############################################################################
 # Constants & Globals
 ###############################################################################
-$Script:AppName = "Dateimanager"
-$Script:Version = "1.0.1"
-$Script:SearchResults = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
-$Script:LogLock = New-Object Object
+$Script:AppName = 'Dateimanager'
+$Script:Version = '2.0.0'
+$Script:ScriptRoot = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+if (-not (Test-Path -LiteralPath $Script:ScriptRoot -PathType Container)) { $Script:ScriptRoot = (Get-Location).Path }
+$Script:ActionStamp = $null
+$Script:LogLock = New-Object object
+$LogHtmlPath = Join-Path $Script:ScriptRoot 'log.html'
 
 ###############################################################################
-# Logging (HTML)
+# HTML Logging (reichhaltig – „altes“ Logging)
 ###############################################################################
-# Funktion zur Initialisierung der HTML-Logdatei.
-# Erstellt die Datei nur, wenn sie noch nicht existiert. Verwendet ein dunkles Layout.
 function Initialize-LogHtml {
-    # Sicherstellen, dass Zielverzeichnis existiert
-    $logDir = Split-Path -Parent $LogHtmlPath
-    if ($logDir -and -not (Test-Path -LiteralPath $logDir)) {
-        try { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } catch { }
-    }
+    $dir = Split-Path -Parent $LogHtmlPath
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     if (Test-Path -LiteralPath $LogHtmlPath) { return }
     $app = $Script:AppName
     $ver = $Script:Version
@@ -87,645 +90,345 @@ function Initialize-LogHtml {
     try {
         Set-Content -Path $LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8 -ErrorAction Stop
     } catch {
-        # Fallback auf %TEMP% wenn Erstellung im Repo-Verzeichnis fehlschlägt (z.B. Rechte, Lock, Virenscanner)
         $fallbackDir = Join-Path $env:TEMP 'DateimanagerLogs'
         try { if (-not (Test-Path -LiteralPath $fallbackDir)) { New-Item -ItemType Directory -Path $fallbackDir -Force | Out-Null } } catch {}
-        $global:LogHtmlPath = Join-Path $fallbackDir 'log.html'
-        try {
-            Set-Content -Path $global:LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8 -ErrorAction Stop
-            Write-Host "[LOG] Primärer Pfad fehlgeschlagen -> Fallback verwendet: $global:LogHtmlPath" -ForegroundColor Yellow
-        } catch {
-            Write-Host "[LOG] Erstellung auch im Fallback fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Red
-        }
+        $script:LogHtmlPath = Join-Path $fallbackDir 'log.html'
+        try { Set-Content -Path $script:LogHtmlPath -Value ($lines -join "`n") -Encoding UTF8 -ErrorAction Stop } catch {}
     }
 }
 
-
-# Schreibt einen Eintrag (Zeile) in die HTML-Logdatei.
-# Parameter:
-#   Level  = INFO | OK | WARN | ERROR (Steuert Farbe/Icon)
-#   Action = Kurze Beschreibung der Aktion (z.B. "Suche", "Backup")
-#   Details= Pfad oder Zusatzinfos
 function Write-LogHtml {
     param(
-        [ValidateSet("INFO","OK","WARN","ERROR")]
-        [string]$Level = "INFO",
+        [ValidateSet('INFO','OK','WARN','ERROR')][string]$Level = 'INFO',
         [string]$Action,
         [string]$Details
     )
     Initialize-LogHtml
-    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    $levelClass = "level-info"
-    if ($Level -eq "OK")    { $levelClass = "level-ok" }
-    elseif ($Level -eq "WARN")  { $levelClass = "level-warn" }
-    elseif ($Level -eq "ERROR") { $levelClass = "level-error" }
-
+    if (-not (Test-Path -LiteralPath $LogHtmlPath)) { return }
+    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     $safe = $Details
-    try {
-        $safe = [System.Net.WebUtility]::HtmlEncode($Details)
-    } catch {}
-
-    $icon = ""
-    switch ($Level) {
-        "INFO"  { $icon = "<span class='icon'>ℹ️</span>" }
-        "OK"    { $icon = "<span class='icon'>✅</span>" }
-        "WARN"  { $icon = "<span class='icon'>⚠️</span>" }
-        "ERROR" { $icon = "<span class='icon'>❌</span>" }
-    }
-    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $levelClass'>$icon$Level</span></td></tr>"
-    if (-not (Test-Path -LiteralPath $LogHtmlPath)) {
-        Initialize-LogHtml
-        if (-not (Test-Path -LiteralPath $LogHtmlPath)) { Write-Host "[LOG] Kein Log-Pfad verfuegbar." -ForegroundColor Red; return }
-    }
+    try { $safe = [System.Net.WebUtility]::HtmlEncode($Details) } catch {}
+    $icon = switch ($Level) { 'OK' { '✅' } 'WARN' { '⚠️' } 'ERROR' { '❌' } default { 'ℹ️' } }
+    $cls  = switch ($Level) { 'OK' { 'level-ok' } 'WARN' { 'level-warn' } 'ERROR' { 'level-error' } default { 'level-info' } }
+    $row = "<tr><td class='time'>$ts</td><td>$Action</td><td class='path'>$safe</td><td><span class='tag $cls'><span class='icon'>$icon</span>$Level</span></td></tr>"
     $null = [System.Threading.Monitor]::Enter($Script:LogLock)
     try {
-        $content = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8 -ErrorAction Stop
-        $updated = $content -replace '</tbody>', "$row`n      </tbody>"
-        Set-Content -Path $LogHtmlPath -Value $updated -Encoding UTF8 -ErrorAction Stop
-    } catch {
-        Write-Host "[LOG] Schreibfehler: $($_.Exception.Message)" -ForegroundColor Red
-    } finally {
-        [System.Threading.Monitor]::Exit($Script:LogLock)
-    }
+        $html = Get-Content -LiteralPath $LogHtmlPath -Raw -Encoding UTF8
+        $out  = $html -replace '</tbody>', "$row`n      </tbody>"
+        Set-Content -Path $LogHtmlPath -Value $out -Encoding UTF8
+    } catch {}
+    finally { [System.Threading.Monitor]::Exit($Script:LogLock) }
 }
 
 ###############################################################################
-# Config
+# Helpers
 ###############################################################################
-# Lädt die Konfiguration (JSON). Bei Fehlern oder nicht vorhandener Datei
-# wird ein Standardobjekt zurückgegeben.
-function Get-Config {
-    if (Test-Path $ConfigPath) {
+function Get-ActionStamp { if (-not $Script:ActionStamp) { $Script:ActionStamp = Get-Date -Format 'yyyyMMdd_HHmmss' }; return $Script:ActionStamp }
+function Reset-ActionStamp { $Script:ActionStamp = $null }
+
+function Get-SafeExistingDirectory {
+    param([string]$Path)
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
         try {
-            $json = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-            return $json
-        } catch {
-            Write-LogHtml -Level "ERROR" -Action "Config laden" -Details "Ungueltige JSON-Datei: $ConfigPath - $($_.Exception.Message)"
-        }
+            $full = [System.IO.Path]::GetFullPath($Path)
+            if (Test-Path -LiteralPath $full -PathType Container) { return $full }
+        } catch {}
     }
-    return [pscustomobject]@{
-        RootPath       = "$HOME"
-        Pattern        = "*"
-        IncludeSub     = $true
-        Destination    = "$HOME\Desktop"
-        BackupRoot     = "$HOME\Backups"
-        ArchivePath    = "$HOME\Desktop\Archiv.zip"
-        MinSizeKB      = 0
-        MaxSizeKB      = 0
-        ModifiedAfter  = ""
-        ModifiedBefore = ""
-        # Regex support entfernt
-    }
+    if ($env:USERPROFILE -and (Test-Path -LiteralPath $env:USERPROFILE -PathType Container)) { return $env:USERPROFILE }
+    return (Get-Location).Path
 }
 
-# Speichert die aktuelle Konfiguration als JSON.
-function Save-Config {
-    param([psobject]$Cfg)
-    try {
-        $Cfg | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding UTF8
-        Write-LogHtml -Level "OK" -Action "Config speichern" -Details $ConfigPath
-    } catch {
-        Write-LogHtml -Level "ERROR" -Action "Config speichern" -Details $_.Exception.Message
-    }
-}
-
-###############################################################################
-# File Ops
-###############################################################################
-# Sucht nach Dateien basierend auf RootPath und Pattern.
-# Optional könnten (derzeit deaktivierte) Filter wie Größe/Datum ergänzt werden.
-function Get-MatchingFiles {
-    param(
-        [string]$RootPath,
-        [string]$Pattern = "*",
-        [bool]$Recurse = $true,
-        [int]$MinSizeKB = 0,
-        [int]$MaxSizeKB = 0,
-        [string]$ModifiedAfter = "",
-        [string]$ModifiedBefore = ""
-    )
-
-    if (-not (Test-Path $RootPath)) {
-        Write-LogHtml -Level "ERROR" -Action "Suche" -Details "Pfad nicht gefunden: $RootPath"
-        return @()
-    }
-
-    try {
-        $all = Get-ChildItem -LiteralPath $RootPath -File -Recurse:$Recurse -ErrorAction Stop -Filter $Pattern
-
-        if ($MinSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -ge ($MinSizeKB * 1KB) } }
-        if ($MaxSizeKB -gt 0) { $all = $all | Where-Object { $_.Length -le ($MaxSizeKB * 1KB) } }
-        if ($ModifiedAfter)  { $after  = Get-Date $ModifiedAfter;  $all = $all | Where-Object { $_.LastWriteTime -ge $after } }
-        if ($ModifiedBefore) { $before = Get-Date $ModifiedBefore; $all = $all | Where-Object { $_.LastWriteTime -le $before } }
-
-        $files = $all | Select-Object FullName, Name, DirectoryName, Length, LastWriteTime
-        Write-LogHtml -Level "OK" -Action "Suche" -Details "Gefunden: $($files.Count) – '$Pattern' in $RootPath"
-        return ,$files
-    } catch {
-        Write-LogHtml -Level "ERROR" -Action "Suche" -Details $_.Exception.Message
-        return @()
-    }
-}
-
-# Kopiert oder verschiebt eine Liste von Dateien in ein Zielverzeichnis.
-# Bei Fehlern wird ein Log-Eintrag mit Level ERROR erzeugt.
-function Copy-Or-MoveFiles {
-    param(
-        [array]$Items,
-        [string]$Destination,
-        [switch]$Move
-    )
-    if (-not (Test-Path $Destination)) { New-Item -ItemType Directory -Path $Destination -Force | Out-Null }
-    foreach ($it in $Items) {
+function Select-Folder {
+    param([string]$InitialPath)
+    $sel = $null
+    $attempt = 0
+    while ($attempt -lt 2) {
+        $attempt++
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
         try {
-            $target = Join-Path $Destination $it.Name
-            if ($Move.IsPresent) {
-                Move-Item -LiteralPath $it.FullName -Destination $target -Force
-                Write-LogHtml -Level "OK" -Action "Verschieben" -Details "$($it.FullName) -> $target"
-            } else {
-                Copy-Item -LiteralPath $it.FullName -Destination $target -Force
-                Write-LogHtml -Level "OK" -Action "Kopieren" -Details "$($it.FullName) -> $target"
-            }
+            $dlg.ShowNewFolderButton = $true
+            $safe = Get-SafeExistingDirectory -Path $InitialPath
+            if ($safe) { $dlg.SelectedPath = $safe }
+            $res = $dlg.ShowDialog()
+            if ($res -eq [System.Windows.Forms.DialogResult]::OK) { $sel = $dlg.SelectedPath; break }
+            else { break } # Bei Abbruch nicht erneut öffnen
         } catch {
-            $act = "Kopieren"
-            if ($Move.IsPresent) { $act = "Verschieben" }
-            Write-LogHtml -Level "ERROR" -Action $act -Details "$($it.FullName): $($_.Exception.Message)"
-        }
+            if ($attempt -ge 2) { throw }
+            # bei Ausnahme einmalig erneut versuchen
+        } finally { $dlg.Dispose() }
     }
-}
-
-# Erstellt ein ZIP-Archiv aus den ausgewählten Dateien.
-function New-Archive {
-    param(
-        [array]$Items,
-        [string]$ArchivePath
-    )
-    try {
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-        foreach ($it in $Items) {
-            Copy-Item -LiteralPath $it.FullName -Destination (Join-Path $tmp $it.Name) -Force
-        }
-        if (Test-Path $ArchivePath) { Remove-Item -LiteralPath $ArchivePath -Force }
-        Compress-Archive -Path (Join-Path $tmp "*") -DestinationPath $ArchivePath -Force
-        Remove-Item -LiteralPath $tmp -Recurse -Force
-        Write-LogHtml -Level "OK" -Action "Archiv erstellen" -Details $ArchivePath
-    } catch {
-        Write-LogHtml -Level "ERROR" -Action "Archiv erstellen" -Details $_.Exception.Message
-    }
-}
-
-# Erstellt einen Zeitstempel-Ordner und kopiert die ausgewählten Dateien hinein.
-function New-Backup {
-    param(
-        [array]$Items,
-        [string]$BackupRoot
-    )
-    try {
-        if (-not $Items -or $Items.Count -eq 0) {
-            Write-LogHtml -Level 'WARN' -Action 'Backup' -Details 'Keine Dateien übergeben'
-            return
-        }
-        if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
-            $BackupRoot = Join-Path $HOME 'Backups'
-            Write-LogHtml -Level 'INFO' -Action 'Backup' -Details "Leerer BackupRoot -> Verwende $BackupRoot"
-        }
-        if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
-            try {
-                New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
-                Write-LogHtml -Level 'OK' -Action 'Backup' -Details "Basisordner erstellt: $BackupRoot"
-            } catch {
-                throw "BackupRoot kann nicht erstellt werden: $BackupRoot - $($_.Exception.Message)"
-            }
-        }
-        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-        $dest = Join-Path $BackupRoot "Backup_$stamp"
-        New-Item -ItemType Directory -Path $dest -Force | Out-Null
-        $copied = 0
-        foreach ($it in $Items) {
-            try {
-                $targetFile = Join-Path $dest $it.Name
-                Copy-Item -LiteralPath $it.FullName -Destination $targetFile -Force -ErrorAction Stop
-                Write-LogHtml -Level 'INFO' -Action 'Backup-Datei' -Details "$($it.FullName) -> $targetFile"
-                $copied++
-            } catch {
-                Write-LogHtml -Level 'ERROR' -Action 'Backup-Datei' -Details "$($it.FullName): $($_.Exception.Message)"
-            }
-        }
-        if ($copied -gt 0) {
-            Write-LogHtml -Level 'OK' -Action 'Backup' -Details "$dest (Dateien: $copied)"
-        } else {
-            Write-LogHtml -Level 'WARN' -Action 'Backup' -Details 'Keine Dateien kopiert'
-        }
-        return $dest
-    } catch {
-        Write-LogHtml -Level 'ERROR' -Action 'Backup' -Details $_.Exception.Message
-    }
-}
-
-###############################################################################
-# WPF UI
-###############################################################################
-$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="$($Script:AppName) $($Script:Version)" Height="700" Width="1100"
-        WindowStartupLocation="CenterScreen"
-        Background="#0f1115" Foreground="#e5e7eb" FontFamily="Segoe UI">
-    <Window.Resources>
-    <SolidColorBrush x:Key="CardBg" Color="#181818"/>
-    <SolidColorBrush x:Key="Accent" Color="#3a82f7"/>
-    <SolidColorBrush x:Key="Accent2" Color="#4fc3f7"/>
-
-        <Style TargetType="Button">
-            <Setter Property="Margin" Value="6"/>
-            <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="Background" Value="#181818"/>
-            <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="BorderBrush" Value="#232323"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontSize" Value="15"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border CornerRadius="0" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Opacity="0.95">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="Effect">
-                <Setter.Value>
-                    <DropShadowEffect BlurRadius="6" ShadowDepth="0" Color="#222" Opacity="0.2"/>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style TargetType="TextBox">
-            <Setter Property="Margin" Value="6"/>
-            <Setter Property="Padding" Value="8,6"/>
-            <Setter Property="Background" Value="#101010"/>
-            <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="BorderBrush" Value="#232323"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontSize" Value="15"/>
-        </Style>
-
-        <Style TargetType="CheckBox">
-            <Setter Property="Margin" Value="6"/>
-        </Style>
-
-        <Style TargetType="DatePicker">
-            <Setter Property="Margin" Value="6"/>
-            <Setter Property="Background" Value="#111827"/>
-            <Setter Property="Foreground" Value="#e5e7eb"/>
-        </Style>
-
-        <Style TargetType="DataGrid">
-            <Setter Property="Margin" Value="6"/>
-            <Setter Property="Background" Value="#101010"/>
-            <Setter Property="Foreground" Value="#e5e7eb"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Arial, sans-serif"/>
-            <Setter Property="FontSize" Value="15"/>
-            <Setter Property="RowHeight" Value="32"/>
-            <Setter Property="GridLinesVisibility" Value="All"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="#232323"/>
-            <Setter Property="VerticalGridLinesBrush" Value="#232323"/>
-            <Setter Property="RowBackground" Value="#181818"/>
-            <Setter Property="AlternatingRowBackground" Value="#232323"/>
-            <Setter Property="BorderBrush" Value="#232323"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CellStyle">
-                <Setter.Value>
-                    <Style TargetType="DataGridCell">
-                        <Setter Property="BorderThickness" Value="1"/>
-                        <Setter Property="BorderBrush" Value="#232323"/>
-                        <Setter Property="Background" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=Background}"/>
-                        <Style.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#23272f"/>
-                            </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="#3b82f6"/>
-                                <Setter Property="Foreground" Value="#fff"/>
-                            </Trigger>
-                        </Style.Triggers>
-                    </Style>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="ColumnHeaderStyle">
-                <Setter.Value>
-                    <Style TargetType="DataGridColumnHeader">
-                        <Setter Property="Background" Value="#181818"/>
-                        <Setter Property="Foreground" Value="#a3a3a3"/>
-                        <Setter Property="FontWeight" Value="SemiBold"/>
-                        <Setter Property="FontSize" Value="15"/>
-                        <Setter Property="BorderBrush" Value="#232323"/>
-                        <Setter Property="BorderThickness" Value="0,0,1,1"/>
-                        <Setter Property="Padding" Value="8,4,8,4"/>
-                    </Style>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- Merged single default GroupBox style -->
-        <Style TargetType="GroupBox">
-            <Setter Property="Margin" Value="8"/>
-            <Setter Property="Padding" Value="10"/>
-            <Setter Property="Background" Value="{StaticResource CardBg}"/>
-            <Setter Property="BorderBrush" Value="#283044"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type GroupBox}">
-                        <Grid>
-                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0" Opacity="0.70"/>
-                            <Grid Margin="6">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" Text="{TemplateBinding Header}" Foreground="#9ca3af" FontSize="13" Margin="4,0,0,8"/>
-                                <ContentPresenter Grid.Row="1"/>
-                            </Grid>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-    </Window.Resources>
-
-    <Grid Margin="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <StackPanel Orientation="Horizontal" Grid.Row="0">
-            <Button x:Name="BtnLoadCfg" Content="🗂️ Preset laden"/>
-            <Button x:Name="BtnSaveCfg" Content="💾 Preset speichern"/>
-            <Button x:Name="BtnOpenLogs" Content="📄 Logs anzeigen"/>
-            <TextBlock Text=" | " VerticalAlignment="Center" Margin="4"/>
-            <Button x:Name="BtnSearch" Content="🔍 Suchen"/>
-            <Button x:Name="BtnCopy" Content="📋 Kopieren"/>
-            <Button x:Name="BtnMove" Content="✂️ Verschieben"/>
-            <Button x:Name="BtnArchive" Content="🗜️ Archiv (ZIP)"/>
-            <Button x:Name="BtnBackup" Content="🛡️ Backup"/>
-        </StackPanel>
-
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="360"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Grid.Column="0">
-                <GroupBox Header="Quelle &amp; Filter">
-                    <StackPanel>
-                        <TextBlock Text="Wurzelpfad"/>
-                        <TextBox x:Name="TbRoot"/>
-                        <TextBlock Text="Muster (z.B. *.pdf)"/>
-                        <TextBox x:Name="TbPattern"/>
-                        <CheckBox x:Name="CbSub" Content="Unterordner einbeziehen"/>
-                            <!-- Date and size filters removed -->
-                    </StackPanel>
-                </GroupBox>
-
-                <GroupBox Header="Ziel / Aktionen">
-                    <StackPanel>
-                        <TextBlock Text="Zielordner (Kopieren/Verschieben)"/>
-                        <TextBox x:Name="TbDest"/>
-                        <TextBlock Text="Backup Basisordner"/>
-                        <TextBox x:Name="TbBackupRoot"/>
-                        <TextBlock Text="Archiv-Ziel (ZIP)"/>
-                        <TextBox x:Name="TbArchive"/>
-                    </StackPanel>
-                </GroupBox>
-            </StackPanel>
-
-            <Grid Grid.Column="1">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <DataGrid x:Name="GridResults" Grid.Row="0" AutoGenerateColumns="False" SelectionMode="Extended" CanUserAddRows="False">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="220"/>
-                            <DataGridTextColumn Header="Pfad" Binding="{Binding FullName}" Width="*"/>
-                            <DataGridTextColumn Header="Ordner" Binding="{Binding DirectoryName}" Width="200"/>
-                            <DataGridTextColumn Header="Groesse" Binding="{Binding Length}" Width="100"/>
-                            <DataGridTextColumn Header="Geaendert" Binding="{Binding LastWriteTime}" Width="160"/>
-                        </DataGrid.Columns>
-                        <DataGrid.BorderBrush>
-                            <SolidColorBrush Color="#444"/>
-                        </DataGrid.BorderBrush>
-                        <DataGrid.RowStyle>
-                            <Style TargetType="DataGridRow">
-                                <Setter Property="Background" Value="#181818"/>
-                                <Setter Property="Foreground" Value="#e5e7eb"/>
-                                <Style.Triggers>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter Property="Background" Value="#3b82f6"/>
-                                        <Setter Property="Foreground" Value="#ffffff"/>
-                                    </Trigger>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#253a6b"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </DataGrid.RowStyle>
-                        <DataGrid.CellStyle>
-                            <Style TargetType="DataGridCell">
-                                <Setter Property="BorderThickness" Value="1"/>
-                                <Setter Property="BorderBrush" Value="#444"/>
-                                <Setter Property="Background" Value="#181818"/>
-                                <Style.Triggers>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter Property="Background" Value="#3b82f6"/>
-                                        <Setter Property="Foreground" Value="#ffffff"/>
-                                    </Trigger>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#253a6b"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </DataGrid.CellStyle>
-                        <DataGrid.GridLinesVisibility>All</DataGrid.GridLinesVisibility>
-                </DataGrid>
-
-                <TextBlock Grid.Row="1" Text="Tipp: Mehrfachauswahl mit Strg/Shift. Aktionen betreffen markierte Zeilen; ohne Auswahl wirken alle Aktionen auf alle Treffer." Margin="6" Foreground="#9ca3af"/>
-            </Grid>
-        </Grid>
-
-        <DockPanel Grid.Row="2">
-            <TextBlock x:Name="StatusText" Text="Bereit." Margin="6" Foreground="#9ca3af"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"@
-
-[xml]$xml = $xaml
-$reader = (New-Object System.Xml.XmlNodeReader $xml)
-$window = [Windows.Markup.XamlReader]::Load($reader)
-
-###############################################################################
-# Bind Controls
-###############################################################################
-$BtnLoadCfg   = $window.FindName('BtnLoadCfg')
-$BtnSaveCfg   = $window.FindName('BtnSaveCfg')
-$BtnOpenLogs  = $window.FindName('BtnOpenLogs')
-$BtnSearch    = $window.FindName('BtnSearch')
-$BtnCopy      = $window.FindName('BtnCopy')
-$BtnMove      = $window.FindName('BtnMove')
-$BtnArchive   = $window.FindName('BtnArchive')
-$BtnBackup    = $window.FindName('BtnBackup')
-
-$TbRoot       = $window.FindName('TbRoot')
-$TbPattern    = $window.FindName('TbPattern')
-$CbSub        = $window.FindName('CbSub')
-## Removed Min/Max KB and Date controls
-
-$TbDest       = $window.FindName('TbDest')
-$TbBackupRoot = $window.FindName('TbBackupRoot')
-$TbArchive    = $window.FindName('TbArchive')
-
-$GridResults  = $window.FindName('GridResults')
-$StatusText   = $window.FindName('StatusText')
-
-$GridResults.ItemsSource = $Script:SearchResults
-
-###############################################################################
-# Load initial config
-###############################################################################
-$cfg = Get-Config
-$TbRoot.Text       = $cfg.RootPath
-$TbPattern.Text    = $cfg.Pattern
-$CbSub.IsChecked   = [bool]$cfg.IncludeSub
-$TbDest.Text       = $cfg.Destination
-$TbBackupRoot.Text = $cfg.BackupRoot
-$TbArchive.Text    = $cfg.ArchivePath
-## Removed Min/Max KB and Date config loading
-
-Initialize-LogHtml
-Write-LogHtml -Level 'INFO' -Action 'Start' -Details "Anwendung gestartet (Root=$($Script:ScriptRoot))"
-
-###############################################################################
-# UI helpers
-###############################################################################
-# Ermittelt die aktuelle Auswahl im DataGrid.
-# Wenn keine Auswahl getroffen wurde, werden alle angezeigten Treffer verwendet.
-function Get-CurrentSelection {
-    $sel = @()
-    foreach ($item in $GridResults.SelectedItems) { $sel += $item }
-    if ($sel.Count -eq 0) { $sel = @($Script:SearchResults) }
     return $sel
 }
 
-# Setzt die Statuszeile unten im Fenster.
-function Update-Status {
-    param([string]$msg)
-    $StatusText.Text = $msg
+function Get-SelectedFiles {
+    # Erst Checkboxen, dann markierte, sonst alle
+    $checked = @($lvFiles.Items | Where-Object { $_.Checked } | ForEach-Object { $_.Tag })
+    if ($checked.Count -gt 0) { return $checked }
+    $sel = @($lvFiles.SelectedItems | ForEach-Object { $_.Tag })
+    if ($sel.Count -gt 0) { return $sel }
+    return @($lvFiles.Items | ForEach-Object { $_.Tag })
+}
+
+# Formatiert Bytes als menschenlesbare Größe (z. B. 1.2 MB)
+function Format-FileSize {
+    param([long]$Bytes)
+    try {
+        $size = [double]$Bytes
+        $units = @('B','KB','MB','GB','TB','PB')
+        $idx = 0
+        while ($size -ge 1024 -and $idx -lt ($units.Count - 1)) { $size /= 1024; $idx++ }
+        if ($idx -eq 0) { return ("{0:N0} {1}" -f $size, $units[$idx]) }
+        else { return ("{0:N1} {1}" -f $size, $units[$idx]) }
+    } catch { return "$Bytes B" }
 }
 
 ###############################################################################
-# Wire events
+# Build Windows Forms UI
 ###############################################################################
-$BtnLoadCfg.Add_Click({
-    $cfg = Get-Config
-    $TbRoot.Text       = $cfg.RootPath
-    $TbPattern.Text    = $cfg.Pattern
-    $CbSub.IsChecked   = [bool]$cfg.IncludeSub
-    $TbDest.Text       = $cfg.Destination
-    $TbBackupRoot.Text = $cfg.BackupRoot
-    $TbArchive.Text    = $cfg.ArchivePath
-    ## Removed Min/Max KB and Date config loading
-    Update-Status "Preset geladen."
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "$($Script:AppName) $($Script:Version)"
+$form.StartPosition = 'CenterScreen'
+$form.Size = New-Object System.Drawing.Size(1100, 700)
+$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+$form.MinimumSize = New-Object System.Drawing.Size(900, 600)
+
+$lblRoot = New-Object System.Windows.Forms.Label;   $lblRoot.Text = 'Wurzelpfad'; $lblRoot.Location = '12,12'; $lblRoot.AutoSize = $true
+$tbRoot  = New-Object System.Windows.Forms.TextBox; $tbRoot.Location = '12,32'; $tbRoot.Width = 320; $tbRoot.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnBrowseRoot = New-Object System.Windows.Forms.Button; $btnBrowseRoot.Text = 'Durchsuchen…'; $btnBrowseRoot.Location = '340,30'
+
+$lblPattern = New-Object System.Windows.Forms.Label; $lblPattern.Text = 'Muster (z.B. *.pdf)'; $lblPattern.Location = '12,64'; $lblPattern.AutoSize = $true
+$tbPattern = New-Object System.Windows.Forms.TextBox; $tbPattern.Location = '12,84'; $tbPattern.Width = 320; $tbPattern.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+
+$lblDest = New-Object System.Windows.Forms.Label; $lblDest.Text = 'Zielordner (Kopieren/Verschieben)'; $lblDest.Location = '12,150'; $lblDest.AutoSize = $true
+$tbDest  = New-Object System.Windows.Forms.TextBox; $tbDest.Location = '12,170'; $tbDest.Width = 320; $tbDest.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnBrowseDest = New-Object System.Windows.Forms.Button; $btnBrowseDest.Text = 'Durchsuchen…'; $btnBrowseDest.Location = '340,168'
+
+$lblBackup = New-Object System.Windows.Forms.Label; $lblBackup.Text = 'Backup Basisordner'; $lblBackup.Location = '12,202'; $lblBackup.AutoSize = $true
+$tbBackup = New-Object System.Windows.Forms.TextBox; $tbBackup.Location = '12,222'; $tbBackup.Width = 320; $tbBackup.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnBrowseBackup = New-Object System.Windows.Forms.Button; $btnBrowseBackup.Text = 'Durchsuchen…'; $btnBrowseBackup.Location = '340,220'
+
+$lblArchive = New-Object System.Windows.Forms.Label; $lblArchive.Text = 'Archiv-Ziel (ZIP)'; $lblArchive.Location = '12,254'; $lblArchive.AutoSize = $true
+$tbArchive = New-Object System.Windows.Forms.TextBox; $tbArchive.Location = '12,274'; $tbArchive.Width = 320; $tbArchive.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnBrowseArchive = New-Object System.Windows.Forms.Button; $btnBrowseArchive.Text = '…'; $btnBrowseArchive.Location = '340,272'
+
+$btnSearch  = New-Object System.Windows.Forms.Button; $btnSearch.Text = 'Suchen'; $btnSearch.Width = 140
+$btnCopy    = New-Object System.Windows.Forms.Button; $btnCopy.Text = 'Kopieren'; $btnCopy.Width = 140
+$btnMove    = New-Object System.Windows.Forms.Button; $btnMove.Text = 'Verschieben'; $btnMove.Width = 140
+$btnArchive = New-Object System.Windows.Forms.Button; $btnArchive.Text = 'Archiv (ZIP)'; $btnArchive.Width = 140
+$btnBackup  = New-Object System.Windows.Forms.Button; $btnBackup.Text = 'Backup'; $btnBackup.Width = 140
+
+# Button-Styles (Farben) und Layout innerhalb eines Panels
+foreach ($btn in @($btnSearch,$btnCopy,$btnMove,$btnArchive,$btnBackup)) {
+    $btn.UseVisualStyleBackColor = $false
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.Height = 34
+}
+$btnSearch.BackColor  = [System.Drawing.Color]::SteelBlue;   $btnSearch.ForeColor  = [System.Drawing.Color]::White
+$btnCopy.BackColor    = [System.Drawing.Color]::SeaGreen;    $btnCopy.ForeColor    = [System.Drawing.Color]::White
+$btnMove.BackColor    = [System.Drawing.Color]::DarkOrange;  $btnMove.ForeColor    = [System.Drawing.Color]::White
+$btnArchive.BackColor = [System.Drawing.Color]::MediumPurple; $btnArchive.ForeColor = [System.Drawing.Color]::White
+$btnBackup.BackColor  = [System.Drawing.Color]::Teal;        $btnBackup.ForeColor  = [System.Drawing.Color]::White
+
+# Panel für Buttons oben rechts
+$pnlActions = New-Object System.Windows.Forms.Panel
+$pnlActions.Width = 160
+$pnlActions.Height = 220
+$pnlActions.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+$pnlActions.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - $pnlActions.Width - 12), 12)
+
+# Buttons im Panel anordnen (vertikal)
+$btnSearch.Location  = '10,0'
+$btnCopy.Location    = '10,44'
+$btnMove.Location    = '10,88'
+$btnArchive.Location = '10,132'
+$btnBackup.Location  = '10,176'
+
+$pnlActions.Controls.AddRange(@($btnSearch,$btnCopy,$btnMove,$btnArchive,$btnBackup))
+
+$lvFiles = New-Object System.Windows.Forms.ListView
+$lvFiles.Location = '12,320'
+$lvFiles.Size = New-Object System.Drawing.Size(1060, 300)
+$lvFiles.View = [System.Windows.Forms.View]::Details
+$lvFiles.FullRowSelect = $true
+$lvFiles.CheckBoxes = $true
+$lvFiles.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$lvFiles.Columns.Add('Name',220)   | Out-Null
+$lvFiles.Columns.Add('Pfad',520)   | Out-Null
+$lvFiles.Columns.Add('Ordner',200) | Out-Null
+$lvFiles.Columns.Add('Groesse',100)| Out-Null
+$lvFiles.Columns.Add('Geaendert',160)| Out-Null
+$lvFiles.Columns[3].TextAlign = [System.Windows.Forms.HorizontalAlignment]::Right
+
+$status = New-Object System.Windows.Forms.StatusStrip
+$lblStatus = New-Object System.Windows.Forms.ToolStripStatusLabel; $lblStatus.Text = 'Bereit.'
+$lnkLog = New-Object System.Windows.Forms.ToolStripStatusLabel; $lnkLog.IsLink = $true; $lnkLog.Text = 'Log öffnen'
+$status.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$pbSearch = New-Object System.Windows.Forms.ToolStripProgressBar
+$pbSearch.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
+$pbSearch.MarqueeAnimationSpeed = 30
+$pbSearch.Visible = $false
+$status.Items.Add($lblStatus) | Out-Null
+$status.Items.Add($lnkLog) | Out-Null
+$status.Items.Add($pbSearch) | Out-Null
+
+$form.Controls.AddRange(@(
+    $lblRoot,$tbRoot,$btnBrowseRoot,
+    $lblPattern,$tbPattern,
+    $lblDest,$tbDest,$btnBrowseDest,
+    $lblBackup,$tbBackup,$btnBrowseBackup,
+    $lblArchive,$tbArchive,$btnBrowseArchive,
+    $pnlActions,
+    $lvFiles,$status
+))
+
+###############################################################################
+# Defaults & status
+###############################################################################
+$tbRoot.Text    = "$HOME"
+$tbPattern.Text = '*'
+$tbDest.Text    = Join-Path $HOME 'Desktop'
+$tbBackup.Text  = Join-Path $HOME 'Backups'
+$tbArchive.Text = Join-Path (Join-Path $HOME 'Desktop') 'Archiv.zip'
+
+function Set-Status([string]$msg) { $lblStatus.Text = $msg }
+
+###############################################################################
+# Events
+###############################################################################
+$btnBrowseRoot.Add_Click({ $sel = Select-Folder -InitialPath $tbRoot.Text; if ($sel) { $tbRoot.Text = $sel } })
+$btnBrowseDest.Add_Click({ $sel = Select-Folder -InitialPath $tbDest.Text; if ($sel) { $tbDest.Text = $sel } })
+$btnBrowseBackup.Add_Click({ $sel = Select-Folder -InitialPath $tbBackup.Text; if ($sel) { $tbBackup.Text = $sel } })
+$btnBrowseArchive.Add_Click({
+    $sfd = New-Object System.Windows.Forms.SaveFileDialog
+    $sfd.Title = 'Archiv speichern unter'; $sfd.Filter = 'ZIP-Archiv (*.zip)|*.zip|Alle Dateien (*.*)|*.*'
+    $initDir = Get-SafeExistingDirectory -Path (Split-Path -Parent $tbArchive.Text)
+    if ($initDir) { $sfd.InitialDirectory = $initDir }
+    $sfd.FileName = if ([string]::IsNullOrWhiteSpace($tbArchive.Text)) { 'Archiv.zip' } else { Split-Path -Leaf $tbArchive.Text }
+    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $tbArchive.Text = $sfd.FileName }
+    $sfd.Dispose()
 })
 
-$BtnSaveCfg.Add_Click({
-    $cfg = [pscustomobject]@{
-        RootPath       = $TbRoot.Text
-        Pattern        = $TbPattern.Text
-        IncludeSub     = [bool]$CbSub.IsChecked
-        Destination    = $TbDest.Text
-        BackupRoot     = $TbBackupRoot.Text
-        ArchivePath    = $TbArchive.Text
-        # Removed Min/Max KB and Date
+$btnSearch.Add_Click({
+    Reset-ActionStamp
+    $lvFiles.BeginUpdate(); $lvFiles.Items.Clear(); $lvFiles.EndUpdate()
+    try {
+        $btnSearch.Enabled = $false; $pbSearch.Visible = $true; Set-Status 'Suche läuft…'
+    if (-not (Test-Path -LiteralPath $tbRoot.Text)) { Set-Status "Pfad nicht gefunden"; Write-LogHtml -Level 'ERROR' -Action 'Suche' -Details "Pfad nicht gefunden: $($tbRoot.Text)"; return }
+        $root = $tbRoot.Text
+        # Muster normalisieren: Unterstützung für ".txt" oder "txt" -> "*.txt"; mehrere Muster via "," oder ";"
+        if ([string]::IsNullOrWhiteSpace($tbPattern.Text)) {
+            $patterns = @('*')
+        } else {
+            $rawParts = $tbPattern.Text -split '[,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $patterns = @()
+            foreach ($p in $rawParts) {
+                if ($p -match '[\*\?\[]') { $patterns += $p }
+                elseif ($p.StartsWith('.')) { $patterns += "*$p" }
+                else { $patterns += "*.$p" }
+            }
+            if ($patterns.Count -eq 0) { $patterns = @('*') }
+        }
+        # Robuste Suche: -Include benötigt Wildcard im Pfad; Fehler (Zugriff) werden unterdrückt
+        $searchPath = (Join-Path $root '*')
+        $files = Get-ChildItem -Path $searchPath -Recurse -File -Include $patterns -ErrorAction SilentlyContinue
+        $count = 0
+        $lvFiles.BeginUpdate()
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Forms.ListViewItem($f.Name)
+            [void]$item.SubItems.Add($f.FullName)
+            [void]$item.SubItems.Add($f.DirectoryName)
+            [void]$item.SubItems.Add((Format-FileSize -Bytes $f.Length))
+            [void]$item.SubItems.Add(($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')))
+            $item.Tag = $f
+            $lvFiles.Items.Add($item) | Out-Null
+            $count++
+        }
+        $lvFiles.EndUpdate()
+        try { $lvFiles.AutoResizeColumns([System.Windows.Forms.ColumnHeaderAutoResizeStyle]::HeaderSize) } catch {}
+        Set-Status ("Treffer: {0}" -f $count)
+        Write-LogHtml -Level 'OK' -Action 'Suche' -Details ("Gefunden: {0} – '{1}' in {2}" -f $count, $tbPattern.Text, $tbRoot.Text)
+    } catch {
+        $msg = $_.Exception.Message; Set-Status "Fehler: $msg"; Write-LogHtml -Level 'ERROR' -Action 'Suche' -Details $msg
     }
-    Save-Config -Cfg $cfg
-    Update-Status "Preset gespeichert."
+    finally { $pbSearch.Visible = $false; $btnSearch.Enabled = $true }
 })
 
-$BtnOpenLogs.Add_Click({
-    Initialize-LogHtml
-    Start-Process $LogHtmlPath
-    Update-Status "Log geöffnet."
-})
-
-$BtnSearch.Add_Click({
-    $Script:SearchResults.Clear()
-
-    $files = Get-MatchingFiles -RootPath $TbRoot.Text -Pattern $TbPattern.Text -Recurse ([bool]$CbSub.IsChecked)
-
-    foreach ($f in $files) { [void]$Script:SearchResults.Add($f) }
-    Update-Status ("Treffer: {0}" -f $Script:SearchResults.Count)
-})
-
-$BtnCopy.Add_Click({
-    $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    Copy-Or-MoveFiles -Items $sel -Destination $TbDest.Text
-    Update-Status "Kopieren abgeschlossen."
-})
-
-$BtnMove.Add_Click({
-    $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    Copy-Or-MoveFiles -Items $sel -Destination $TbDest.Text -Move
-    Update-Status "Verschieben abgeschlossen."
-})
-
-$BtnArchive.Add_Click({
-    $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    New-Archive -Items $sel -ArchivePath $TbArchive.Text
-    Update-Status "Archiv erstellt."
-})
-
-$BtnBackup.Add_Click({
-    $sel = Get-CurrentSelection
-    if ($sel.Count -eq 0) { Update-Status "Keine Dateien ausgewählt."; return }
-    $dest = New-Backup -Items $sel -BackupRoot $TbBackupRoot.Text
-    if ($dest) { Update-Status ("Backup erstellt: {0}" -f $dest) }
-})
-
-###############################################################################
-# Run
-###############################################################################
-
-# Add Closing event handler to prompt user about logs
-$window.Add_Closing({
-        $dlgResult = [System.Windows.MessageBox]::Show(
-            "Bevor sie das Programm schliessen, sollen die Logs gespeichert oder gelöscht werden?",
-            "Log behalten oder löschen?",
-            [System.Windows.MessageBoxButton]::YesNoCancel,
-            [System.Windows.MessageBoxImage]::Question
-        )
-    if ($dlgResult -eq [System.Windows.MessageBoxResult]::Cancel) {
-        $_.Cancel = $true
-        return
+$btnCopy.Add_Click({
+    $sel = Get-SelectedFiles
+    if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
+    if (-not (Test-Path -LiteralPath $tbDest.Text)) { New-Item -ItemType Directory -Path $tbDest.Text -Force | Out-Null }
+    $ok=0;$err=0
+    foreach ($f in $sel) {
+        try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $tbDest.Text $f.Name) -Force; $ok++ }
+        catch { $err++ }
     }
-    elseif ($dlgResult -eq [System.Windows.MessageBoxResult]::No) {
-        # Reset logs: overwrite log file with empty log
-        Remove-Item -Path $LogHtmlPath -Force -ErrorAction SilentlyContinue
-        Initialize-LogHtml
-            Write-LogHtml -Level "INFO" -Action "Reset" -Details "Log wurde zurückgesetzt."
+    Set-Status ("Kopiert: {0}, Fehler: {1}" -f $ok,$err)
+    Write-LogHtml -Level ($err -gt 0 ? 'WARN' : 'OK') -Action 'Kopieren' -Details ("{0} Dateien -> {1}" -f $sel.Count, $tbDest.Text)
+})
+
+$btnMove.Add_Click({
+    $sel = Get-SelectedFiles
+    if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
+    if (-not (Test-Path -LiteralPath $tbDest.Text)) { New-Item -ItemType Directory -Path $tbDest.Text -Force | Out-Null }
+    $ok=0;$err=0
+    foreach ($f in $sel) {
+        try { Move-Item -LiteralPath $f.FullName -Destination (Join-Path $tbDest.Text $f.Name) -Force; $ok++ }
+        catch { $err++ }
+    }
+    Set-Status ("Verschoben: {0}, Fehler: {1}" -f $ok,$err)
+    Write-LogHtml -Level ($err -gt 0 ? 'WARN' : 'OK') -Action 'Verschieben' -Details ("{0} Dateien -> {1}" -f $sel.Count, $tbDest.Text)
+})
+
+$btnArchive.Add_Click({
+    $sel = Get-SelectedFiles
+    if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
+    $stamp = Get-ActionStamp
+    $raw = $tbArchive.Text
+    if ([string]::IsNullOrWhiteSpace($raw)) { $raw = Join-Path $HOME ("Archiv_{0}.zip" -f $stamp) }
+    $outPath = $null
+    if (Test-Path -LiteralPath $raw -PathType Container) {
+        $outPath = Join-Path $raw ("Archiv_{0}.zip" -f $stamp)
     } else {
-        # Keep logs: do nothing
-        Write-LogHtml -Level "INFO" -Action "Ende" -Details "Anwendung geschlossen (Log behalten)"
+        $dir = Split-Path -Parent $raw; if (-not $dir) { $dir = (Get-Location).Path }
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $name = Split-Path -Leaf $raw; if (-not $name.ToLower().EndsWith('.zip')) { $name = "$name.zip" }
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($name)
+        $outPath = Join-Path $dir ("{0}_{1}.zip" -f $base,$stamp)
     }
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        foreach ($f in $sel) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $tmp $f.Name) -Force }
+        if (Test-Path -LiteralPath $outPath) { Remove-Item -LiteralPath $outPath -Force }
+        Compress-Archive -Path (Join-Path $tmp '*') -DestinationPath $outPath -Force
+        Set-Status ("Archiv erstellt: {0}" -f $outPath)
+        Write-LogHtml -Level 'OK' -Action 'Archiv' -Details $outPath
+    } catch { Set-Status ("Fehler beim Archivieren: {0}" -f $_.Exception.Message); Write-LogHtml -Level 'ERROR' -Action 'Archiv' -Details $_.Exception.Message }
+    finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force } }
 })
-$null = $window.ShowDialog()
+
+$btnBackup.Add_Click({
+    $sel = Get-SelectedFiles
+    if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
+    $root = if ([string]::IsNullOrWhiteSpace($tbBackup.Text)) { Join-Path $HOME 'Backups' } else { $tbBackup.Text }
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
+    $dest = Join-Path $root ("Backup_{0}" -f (Get-ActionStamp))
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    $ok=0;$err=0
+    foreach ($f in $sel) {
+        try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $dest $f.Name) -Force; $ok++ }
+        catch { $err++ }
+    }
+    Set-Status ("Backup: {0} Dateien -> {1}" -f $ok,$dest)
+    Write-LogHtml -Level ($err -gt 0 ? 'WARN' : 'OK') -Action 'Backup' -Details ("{0} Dateien -> {1}" -f $ok,$dest)
+})
+
+$lnkLog.Add_Click({ Initialize-LogHtml; if (Test-Path -LiteralPath $LogHtmlPath) { Start-Process -FilePath $LogHtmlPath } })
+
+###############################################################################
+# Startup
+###############################################################################
+Initialize-LogHtml
+Write-LogHtml -Level 'INFO' -Action 'Start' -Details ("Root={0}" -f $Script:ScriptRoot)
+[void]$form.ShowDialog()
