@@ -1,14 +1,15 @@
 #Requires -Version 7.0
 <#
     Dateimanager.ps1
-    PowerShell-Dateimanager mit Windows Forms GUI und HTML-Logging.
+    PowerShell-Dateimanager mit Such-, Kopier-, Verschiebe-, Archivierungs- und Backup-Funktionen
+    Version 2.0.0
 #>
 
 ###############################################################################
-# Single-Threaded Apartment erzwingen (WinForms benötigt STA)
+# Apartment-Zustand STA erzwingen (WinForms benötigt STA)
 ###############################################################################
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
-    $scriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { $null }
+    $scriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.2) { $MyInvocation.MyCommand.Path } else { $null }
     if ($scriptPath -and $IsWindows) {
         Start-Process -FilePath "powershell.exe" -ArgumentList @('-NoProfile','-STA','-File',"$scriptPath") -WindowStyle Normal | Out-Null
         return
@@ -22,7 +23,7 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing | Out-Null
 Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 
 ###############################################################################
-# Constants & Globals
+# Konstanten und globale Variablen
 ###############################################################################
 $Script:AppName = 'Dateimanager'
 $Script:Version = '2.0.0'
@@ -33,8 +34,23 @@ $Script:LogLock = New-Object object
 $LogHtmlPath = Join-Path $Script:ScriptRoot 'log.html'
 
 ###############################################################################
-# HTML-Logging (reichhaltig – „altes“ Logging)
+# HTML-Protokollierung
 ###############################################################################
+###############################################################################
+# HTML-Protokollierung (reichhaltiges, älteres Logformat)
+###############################################################################
+<#
+    Funktion: Initialize-LogHtml
+    Zweck:    Legt die HTML-Logdatei samt Grundgerüst an, falls sie noch nicht existiert.
+    Ablauf:
+      - Zielordner der Logdatei ermitteln und ggf. anlegen
+      - Prüfen, ob die Datei bereits existiert; wenn ja, nichts tun
+      - HTML-Grundaufbau (Head/Styles/Tabelle) als Datei schreiben
+      - Bei Schreibfehlern: Fallback in das TEMP-Verzeichnis nutzen
+    Eingaben: nutzt globale Variable $LogHtmlPath
+    Ausgaben: legt/aktualisiert die Datei an $LogHtmlPath
+    Fehler:   Fehler werden abgefangen; bei Problemen wird auf TEMP ausgewichen
+#>
 function Initialize-LogHtml {
     $dir = Split-Path -Parent $LogHtmlPath
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -97,6 +113,19 @@ function Initialize-LogHtml {
     }
 }
 
+<#
+        Funktion: Write-LogHtml
+        Zweck:    Fügt eine Logzeile in die HTML-Tabelle ein (Zeit, Aktion, Details, Status).
+        Ablauf:
+            - HTML initialisieren (Initialize-LogHtml)
+            - Zeitstempel erzeugen und Details HTML-sicher kodieren
+            - Icon und CSS-Klasse anhand des Levels bestimmen
+            - HTML einlesen, neue Tabellenzeile vor </tbody> einsetzen und Datei speichern
+            - Absicherung gegen parallelen Zugriff per Lock
+        Eingaben: $Level (INFO/OK/WARN/ERROR), $Action, $Details
+        Ausgaben: Schreibt eine neue Tabellenzeile in die Logdatei
+        Fehler:   Fehler beim Schreiben werden abgefangen
+#>
 function Write-LogHtml {
     param(
         [ValidateSet('INFO','OK','WARN','ERROR')][string]$Level = 'INFO',
@@ -123,9 +152,35 @@ function Write-LogHtml {
 ###############################################################################
 # Hilfsfunktionen
 ###############################################################################
+<#
+    Funktion: Get-ActionStamp
+    Zweck:    Liefert einen konsistenten Zeitstempel für die aktuelle Aktion/Sitzung.
+    Ablauf:   Falls noch keiner vorhanden, einen neuen im Format yyyyMMdd_HHmmss erzeugen; anschließend zurückgeben.
+    Eingaben: keine (verwendet globale Variable $Script:ActionStamp)
+    Ausgaben: String-Zeitstempel
+    Fehler:   keine
+#>
 function Get-ActionStamp { if (-not $Script:ActionStamp) { $Script:ActionStamp = Get-Date -Format 'yyyyMMdd_HHmmss' }; return $Script:ActionStamp }
+<#
+    Funktion: Reset-ActionStamp
+    Zweck:    Setzt den Aktions-Zeitstempel zurück, damit die nächste Operation einen neuen erhält.
+    Ablauf:   $Script:ActionStamp auf $null setzen
+    Eingaben: keine
+    Ausgaben: keine (Seiteneffekt)
+    Fehler:   keine
+#>
 function Reset-ActionStamp { $Script:ActionStamp = $null }
 
+<#
+        Funktion: Get-SafeExistingDirectory
+        Zweck:    Validiert einen Pfad und liefert einen existierenden Ordner zurück.
+        Ablauf:
+            - Falls Eingabe vorhanden: absoluten Pfad bilden und auf Ordner-Existenz prüfen
+            - Andernfalls: Benutzerprofil oder aktuelles Arbeitsverzeichnis verwenden
+        Eingaben: $Path (String)
+        Ausgaben: existierender Ordnerpfad (String)
+        Fehler:   Fehler beim Pfadparsen werden abgefangen
+#>
 function Get-SafeExistingDirectory {
     param([string]$Path)
     if (-not [string]::IsNullOrWhiteSpace($Path)) {
@@ -138,6 +193,17 @@ function Get-SafeExistingDirectory {
     return (Get-Location).Path
 }
 
+<#
+        Funktion: Select-Folder
+        Zweck:    Zeigt einen Ordnerauswahldialog und gibt den gewählten Pfad zurück.
+        Ablauf:
+            - Dialog erzeugen, Startpfad sicher bestimmen
+            - Ergebnis auswerten: OK -> Pfad; Abbrechen -> $null
+            - Bei Ausnahme: ein zweiter Versuch, danach Abbruch
+        Eingaben: $InitialPath (optional)
+        Ausgaben: Ordnerpfad oder $null
+        Fehler:   Dialogfehler werden (einmal) erneut versucht
+#>
 function Select-Folder {
     param([string]$InitialPath)
     $sel = $null
@@ -160,6 +226,17 @@ function Select-Folder {
     return $sel
 }
 
+<#
+        Funktion: Get-SelectedFiles
+        Zweck:    Liefert die aktuell ausgewählten Dateien aus dem ListView.
+        Ablauf:
+            - Bevorzugt Checkbox-Auswahl
+            - Fällt zurück auf markierte Zeilen
+            - Fällt zurück auf alle Zeilen
+        Eingaben: keine (benutzt $lvFiles)
+        Ausgaben: Liste von Dateiobjekten (Tags der Items)
+        Fehler:   keine
+#>
 function Get-SelectedFiles {
     # Erst Checkboxen, dann markierte, sonst alle
     $checked = @($lvFiles.Items | Where-Object { $_.Checked } | ForEach-Object { $_.Tag })
@@ -170,6 +247,14 @@ function Get-SelectedFiles {
 }
 
 # Formatiert Bytes als menschenlesbare Größe (z. B. 1.2 MB)
+<#
+    Funktion: Format-FileSize
+    Zweck:    Formatiert eine Byte-Anzahl als lesbare Größe (B/KB/MB/GB/TB/PB).
+    Ablauf:   Größe durch 1024 teilen, bis passende Einheit erreicht; Text formatieren.
+    Eingaben: $Bytes (Int64)
+    Ausgaben: String wie "1,2 MB"
+    Fehler:   Fallback auf "<Bytes> B" bei Fehlern
+#>
 function Format-FileSize {
     param([long]$Bytes)
     try {
@@ -217,7 +302,7 @@ $btnMove    = New-Object System.Windows.Forms.Button; $btnMove.Text = 'Verschieb
 $btnArchive = New-Object System.Windows.Forms.Button; $btnArchive.Text = 'Archiv (ZIP)'; $btnArchive.Width = 140
 $btnBackup  = New-Object System.Windows.Forms.Button; $btnBackup.Text = 'Backup'; $btnBackup.Width = 140
 
-# Button-Styles (Farben) und Layout innerhalb eines Panels
+# Button-Stil (Farben) und Layout innerhalb eines Bereichs
 foreach ($btn in @($btnSearch,$btnCopy,$btnMove,$btnArchive,$btnBackup)) {
     $btn.UseVisualStyleBackColor = $false
     $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -230,14 +315,14 @@ $btnMove.BackColor    = [System.Drawing.Color]::DarkOrange;  $btnMove.ForeColor 
 $btnArchive.BackColor = [System.Drawing.Color]::MediumPurple; $btnArchive.ForeColor = [System.Drawing.Color]::White
 $btnBackup.BackColor  = [System.Drawing.Color]::Teal;        $btnBackup.ForeColor  = [System.Drawing.Color]::White
 
-# Panel für Buttons oben rechts
+# Bereich für Buttons oben rechts
 $pnlActions = New-Object System.Windows.Forms.Panel
 $pnlActions.Width = 160
 $pnlActions.Height = 220
 $pnlActions.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
 $pnlActions.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - $pnlActions.Width - 12), 12)
 
-# Buttons im Panel anordnen (vertikal)
+# Buttons im Bereich anordnen (vertikal)
 $btnSearch.Location  = '10,0'
 $btnCopy.Location    = '10,44'
 $btnMove.Location    = '10,88'
@@ -291,7 +376,14 @@ $tbDest.Text    = Join-Path $HOME 'Desktop'
 $tbBackup.Text  = Join-Path $HOME 'Backups'
 $tbArchive.Text = Join-Path (Join-Path $HOME 'Desktop') 'Archiv.zip'
 
-# Setzt den Text in der Statuszeile (unten links im Fenster)
+<#
+    Funktion: Set-Status
+    Zweck:    Setzt den Text in der Statuszeile unten im Fenster.
+    Ablauf:   Weist dem Label $lblStatus den übergebenen Text zu.
+    Eingaben: $msg (String)
+    Ausgaben: keine (GUI wird aktualisiert)
+    Fehler:   keine
+#>
 function Set-Status([string]$msg) { $lblStatus.Text = $msg }
 
 ###############################################################################
@@ -310,6 +402,22 @@ $btnBrowseArchive.Add_Click({
     $sfd.Dispose()
 })
 
+<#
+        Ereignis-Handler: Suchen (btnSearch)
+        Zweck:    Durchsucht den angegebenen Wurzelpfad rekursiv nach Dateien, die den Mustern entsprechen,
+                            und füllt die Tabelle.
+        Ablauf:
+            - Aktionsstempel zurücksetzen, Liste leeren, Fortschrittsanzeige starten
+            - Pfad prüfen, Muster normalisieren (z. B. ".txt"/"txt" -> "*.txt"; Komma/Strichpunkt als Trenner)
+            - Get-ChildItem mit -Include über Pfad/* rekursiv ausführen, Fehler still unterdrücken
+            - ListView mit Name, Pfad, Ordner, Größe, Datum befüllen (Tag = Dateiobjekt)
+            - Spalten optional autoresizen, Trefferzahl im Status, OK ins Log schreiben
+            - Bei Fehler: Status/Log mit ERROR
+            - Fortschrittsanzeige stoppen, Button wieder aktivieren (finally)
+        Eingaben: $tbRoot, $tbPattern
+        Ausgaben: GUI-ListView und HTML-Log
+        Fehler:   Zugriff/IO-Fehler werden abgefangen und gemeldet
+#>
 $btnSearch.Add_Click({
     Reset-ActionStamp
     $lvFiles.BeginUpdate(); $lvFiles.Items.Clear(); $lvFiles.EndUpdate()
@@ -355,6 +463,19 @@ $btnSearch.Add_Click({
     finally { $pbSearch.Visible = $false; $btnSearch.Enabled = $true }
 })
 
+<#
+        Ereignis-Handler: Kopieren (btnCopy)
+        Zweck:    Ausgewählte Dateien in den Zielordner kopieren.
+        Ablauf:
+            - Auswahl ermitteln (Checkboxen > markiert > alle)
+            - Zielordner prüfen/erstellen
+            - Jede Datei mit Copy-Item nach <Ziel>/<Dateiname> kopieren;
+                Zähler für ok/Fehler führen
+            - Status aktualisieren und je nach Fehlerzahl OK/WARN ins Log schreiben
+        Eingaben: $tbDest, Auswahl aus $lvFiles
+        Ausgaben: Dateien im Zielordner, Status, HTML-Log
+        Fehler:   Einzelne Kopierfehler werden gezählt und führen zu WARN im Log
+#>
 $btnCopy.Add_Click({
     $sel = Get-SelectedFiles
     if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
@@ -368,6 +489,18 @@ $btnCopy.Add_Click({
     Write-LogHtml -Level ($err -gt 0 ? 'WARN' : 'OK') -Action 'Kopieren' -Details ("{0} Dateien -> {1}" -f $sel.Count, $tbDest.Text)
 })
 
+<#
+        Ereignis-Handler: Verschieben (btnMove)
+        Zweck:    Ausgewählte Dateien in den Zielordner verschieben.
+        Ablauf:
+            - Auswahl ermitteln
+            - Zielordner prüfen/erstellen
+            - Move-Item mit -Force je Datei ausführen; ok/Fehler zählen
+            - Status setzen und OK/WARN ins Log schreiben
+        Eingaben: $tbDest, Auswahl aus $lvFiles
+        Ausgaben: Dateien am neuen Ort, Status, HTML-Log
+        Fehler:   Einzelne Verschiebefehler werden gezählt und geloggt
+#>
 $btnMove.Add_Click({
     $sel = Get-SelectedFiles
     if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
@@ -381,6 +514,20 @@ $btnMove.Add_Click({
     Write-LogHtml -Level ($err -gt 0 ? 'WARN' : 'OK') -Action 'Verschieben' -Details ("{0} Dateien -> {1}" -f $sel.Count, $tbDest.Text)
 })
 
+<#
+        Ereignis-Handler: Archiv (ZIP) (btnArchive)
+        Zweck:    Ausgewählte Dateien in ein ZIP-Archiv schreiben.
+        Ablauf:
+            - Auswahl prüfen
+            - Zielpfad ermitteln: Wenn ein Ordner gewählt ist, wird Archiv_<Stamp>.zip darin erstellt;
+                wenn eine Datei/Name gewählt ist, wird dieser mit Zeitstempel ergänzt.
+            - Temporären Ordner anlegen, Dateien hinein kopieren
+            - Bestehendes Ziel-Archiv ggf. löschen, dann Compress-Archive auf Temp/*
+            - Status/Log mit OK; bei Fehlern ERROR; Tempordner im finally entfernen
+        Eingaben: $tbArchive, Auswahl aus $lvFiles
+        Ausgaben: ZIP-Datei, Status, HTML-Log
+        Fehler:   IO-/Zugriffsfehler werden abgefangen und gemeldet
+#>
 $btnArchive.Add_Click({
     $sel = Get-SelectedFiles
     if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
@@ -409,6 +556,19 @@ $btnArchive.Add_Click({
     finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force } }
 })
 
+<#
+        Ereignis-Handler: Backup (btnBackup)
+        Zweck:    Ausgewählte Dateien in einen neuen Zeitstempel-Unterordner des Backup-Basisordners kopieren.
+        Ablauf:
+            - Auswahl prüfen
+            - Basisordner bestimmen (Feld oder ~/Backups) und erstellen
+            - Zielordner Backup_<Stamp> anlegen
+            - Dateien mit Copy-Item hinein kopieren; ok/Fehler zählen
+            - Status setzen und je nach Fehlerzahl OK/WARN loggen
+        Eingaben: $tbBackup, Auswahl aus $lvFiles
+        Ausgaben: Kopierte Dateien im Backup-Ordner, Status, HTML-Log
+        Fehler:   Einzelne Kopierfehler werden gezählt und gemeldet
+#>
 $btnBackup.Add_Click({
     $sel = Get-SelectedFiles
     if (-not $sel -or $sel.Count -eq 0) { Set-Status 'Keine Dateien ausgewählt.'; return }
@@ -428,7 +588,7 @@ $btnBackup.Add_Click({
 $lnkLog.Add_Click({ Initialize-LogHtml; if (Test-Path -LiteralPath $LogHtmlPath) { Start-Process -FilePath $LogHtmlPath } })
 
 ###############################################################################
-# Start
+# Programmstart
 ###############################################################################
 Initialize-LogHtml
 Write-LogHtml -Level 'INFO' -Action 'Start' -Details ("Root={0}" -f $Script:ScriptRoot)
