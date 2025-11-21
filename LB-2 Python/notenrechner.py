@@ -1,7 +1,11 @@
 import sqlite3
 import re
 import os
-from datetime import date
+from datetime import date, datetime
+from tabulate import tabulate
+import csv
+import json
+from fpdf import FPDF
 
 # ---------- KONFIGURATION ----------
 
@@ -19,6 +23,22 @@ SUBJECTS = [
     "Sprache und Kommunikation",
     "122 Abläufe mit Scriptsprache"
 ]
+
+# Terminal-Farben (ANSI)
+COLOR_RESET = "\033[0m"
+COLOR_GREEN = "\033[32m"
+COLOR_YELLOW = "\033[33m"
+COLOR_RED = "\033[31m"
+
+def color_grade(grade: float) -> str:
+    # 6 gut, 1 schlecht
+    if grade >= 5.0:
+        color = COLOR_GREEN      # sehr gut / gut (5–6)
+    elif grade >= 4.0:
+        color = COLOR_YELLOW     # genügend (4–4.9)
+    else:
+        color = COLOR_RED        # ungenügend (1–3.9)
+    return f"{color}{grade:.1f}{COLOR_RESET}"
 
 # ---------- DB-FUNKTIONEN ----------
 
@@ -124,6 +144,17 @@ def get_overall_average():
     conn.close()
     return result
 
+def grade_exists(subject_id, grade_value, grade_date) -> bool:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM grades WHERE subject_id=? AND grade=? AND date=? LIMIT 1;",
+        (subject_id, grade_value, grade_date)
+    )
+    exists = cur.fetchone() is not None
+    conn.close()
+    return exists
+
 # ---------- HILFSFUNKTIONEN (EIN-/AUSGABEN + REGEX) ----------
 
 def input_grade():
@@ -181,6 +212,9 @@ def action_add_grade():
     subj_id, subj_name = select_subject()
     grade_value = input_grade()
     grade_date = input_date()
+    if grade_exists(subj_id, grade_value, grade_date):
+        print("Diese Note für dieses Fach an diesem Datum existiert bereits.\n")
+        return
     insert_grade(subj_id, grade_value, grade_date)
     print(f"Note {grade_value} für '{subj_name}' am {grade_date} gespeichert.\n")
 
@@ -190,8 +224,11 @@ def action_show_all_grades():
     if not rows:
         print("Noch keine Noten erfasst.\n")
         return
-    for subj_name, grade, gdate in rows:
-        print(f"{subj_name:30} | {grade:.1f} | {gdate}")
+    table = [
+        [subj_name, f"{grade:.1f}", gdate]
+        for subj_name, grade, gdate in rows
+    ]
+    print(tabulate(table, headers=["Fach", "Note", "Datum"], tablefmt="github"))
     print()
 
 def action_show_subject_grades():
@@ -203,10 +240,10 @@ def action_show_subject_grades():
         return
     print(f"Noten für '{subj_name}':")
     for grade, gdate in rows:
-        print(f"- {grade:.1f} am {gdate}")
+        print(f"- {color_grade(grade)} am {gdate}")
     avg = get_average_by_subject(subj_id)
     if avg is not None:
-        print(f"Durchschnitt für {subj_name}: {avg:.2f}\n")
+        print(f"Durchschnitt für {subj_name}: {color_grade(avg)}\n")
 
 def action_show_overall_average():
     print("\n--- Gesamtdurchschnitt ---")
@@ -214,7 +251,114 @@ def action_show_overall_average():
     if avg is None:
         print("Noch keine Noten erfasst.\n")
     else:
-        print(f"Gesamtdurchschnitt aller Fächer: {avg:.2f}\n")
+        print(f"Gesamtdurchschnitt aller Fächer: {color_grade(avg)}\n")
+
+def export_csv(path: str | None = None):
+    if path is None:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path = os.path.join(BASE_DIR, f"noten_export_{ts}.csv")
+    rows = get_all_grades()
+    if not rows:
+        print("Keine Noten zum Exportieren.")
+        return
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Fach", "Note", "Datum"])
+        writer.writerows(rows)
+    print(f"Exportiert nach {path}")
+
+def export_json(path: str | None = None):
+    if path is None:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path = os.path.join(BASE_DIR, f"noten_export_{ts}.json")
+    rows = get_all_grades()
+    if not rows:
+        print("Keine Noten zum Exportieren.")
+        return
+    data = [
+        {"subject": s, "grade": g, "date": d}
+        for s, g, d in rows
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(f"Exportiert nach {path}")
+
+def export_pdf(path: str | None = None):
+    if path is None:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path = os.path.join(BASE_DIR, f"notenbericht_{ts}.pdf")
+    rows = get_all_grades()
+    if not rows:
+        print("Keine Noten zum Exportieren.")
+        return
+
+    # PDF Grundlayout
+    pdf = FPDF()
+    pdf.add_page()
+
+    # Titel
+    pdf.set_font("Arial", "B", 18)
+    pdf.cell(0, 12, "Notenbericht", ln=True, align="C")
+
+    # Datum / Meta feiner
+    pdf.set_font("Arial", "", 10)
+    pdf.set_text_color(80, 80, 80)
+    pdf.ln(3)
+    pdf.cell(0, 6, f"Erstellt am: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align="C")
+    pdf.ln(5)
+
+    # dünne Trennlinie
+    pdf.set_draw_color(180, 180, 180)
+    pdf.set_line_width(0.3)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(6)
+
+    # Tabellenkopf
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", "B", 12)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_line_width(0.4)
+
+    col_widths = [95, 25, 50]  # Fach, Note, Datum
+    headers = ["Fach", "Note", "Datum"]
+
+    # Hellgrauer Hintergrund für Header
+    pdf.set_fill_color(230, 230, 230)
+    for width, header in zip(col_widths, headers):
+        pdf.cell(width, 8, header, border=1, align="C", fill=True)
+    pdf.ln(8)
+
+    # Tabellenzeilen mit farbiger Notenspalte
+    pdf.set_font("Arial", "", 12)
+    for subj_name, grade, gdate in rows:
+        # Fach (weiß)
+        pdf.set_fill_color(255, 255, 255)
+        pdf.cell(col_widths[0], 8, subj_name, border=1, fill=True)
+
+        # Note je nach Wert farbig hinterlegen
+        if grade >= 5.0:
+            pdf.set_fill_color(200, 255, 200)  # grünlich
+        elif grade >= 4.0:
+            pdf.set_fill_color(255, 255, 200)  # gelblich
+        else:
+            pdf.set_fill_color(255, 200, 200)  # rötlich
+        pdf.cell(col_widths[1], 8, f"{grade:.1f}", border=1, align="C", fill=True)
+
+        # Datum (weiß)
+        pdf.set_fill_color(255, 255, 255)
+        pdf.cell(col_widths[2], 8, gdate, border=1, align="C", fill=True)
+        pdf.ln(8)
+
+    # Gesamtdurchschnitt unten
+    overall = get_overall_average()
+    if overall is not None:
+        pdf.ln(8)
+        pdf.set_font("Arial", "B", 13)
+        pdf.set_text_color(40, 40, 40)
+        pdf.cell(0, 10, f"Gesamtdurchschnitt aller Fächer: {overall:.2f}", ln=True, align="R")
+
+    pdf.output(path)
+    print(f"PDF erstellt: {path}")
 
 # ---------- HAUPTMENÜ / KONTROLLSTRUKTUREN ----------
 
@@ -226,7 +370,10 @@ def main_menu():
         print("2) Alle Noten anzeigen")
         print("3) Noten nach Fach anzeigen")
         print("4) Gesamtdurchschnitt anzeigen")
-        print("5) Beenden")
+        print("5) Exportiere Noten als CSV")
+        print("6) Exportiere Noten als JSON")
+        print("7) Exportiere Noten als PDF")
+        print("8) Beenden")
         choice = input("Auswahl: ").strip()
 
         if choice == "1":
@@ -238,6 +385,12 @@ def main_menu():
         elif choice == "4":
             action_show_overall_average()
         elif choice == "5":
+            export_csv()
+        elif choice == "6":
+            export_json()
+        elif choice == "7":
+            export_pdf()
+        elif choice == "8":
             print("Programm beendet.")
             break
         else:
