@@ -1,6 +1,7 @@
 # Ignore all JSON files
 *.json
 *.html
+*.pdf
 # (Optional) Uncomment lines below to keep specific JSON files tracked
 #!package.json
 #!data/keep-this.json
