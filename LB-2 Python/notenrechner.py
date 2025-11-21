@@ -12,7 +12,7 @@ from fpdf import FPDF
 # Ordner, in dem dieses Skript liegt
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Datenbankdatei IM GLEICHEN ORDNER wie notenrechner.py
+# Datenbankdatei IM GLEICHEN ORDNER wie dieses Skript (Notenomat)
 DB_NAME = os.path.join(BASE_DIR, "noten.db")
 
 # Vorgegebene Fächer
@@ -365,7 +365,7 @@ def export_pdf(path: str | None = None):
 def main_menu():
     init_db()
     while True:  # while-Schleife als Hauptkontrollstruktur
-        print("====== Notenrechner ======")
+        print("====== Notenomat ======")
         print("1) Note erfassen")
         print("2) Alle Noten anzeigen")
         print("3) Noten nach Fach anzeigen")
